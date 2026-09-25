@@ -11,6 +11,8 @@ Czworonożny robot na 12 serwach Waveshare **ST3215** (TTL, 1 Mbit/s), sterowany
 | `tests/` | Testy hosta (C/Swift) dla kinematyki, chodu, balansu i protokołów – `python3 tests/run_host_tests.py` |
 | `gazebo/` | Model SDF i kontroler do symulacji w Gazebo |
 | `docs/` | Protokół, model lokomocji, schemat płytki (tekst + PNG), notatki z uruchamiania |
+| `docs/datasheets/`, `docs/project/`, `docs/hardware/` | Datasheety (ICM‑42688, INA226, biblioteka ST/SCS), dokumentacja projektu i konkursowa, diagramy draw.io, model 3D ST3215 |
+| `docs/history.md`, `docs/kinematics-review.md`, `docs/references.md` | Historia ustaleń sprzętowych, przegląd kinematyki, literatura (Cheetah 3 i in.) |
 | `diagnostics/` | Izolowane programy testowe (ICM‑42688, DualSense) |
 
 Konfiguracja Wi‑Fi: skopiuj `main/wifi_credentials.example.h` do `main/wifi_credentials.h` (plik jest ignorowany przez git).
