@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840">
+  <style>
+    .title { font: 700 34px -apple-system, BlinkMacSystemFont, sans-serif; fill: #111827; }
+    .subtitle { font: 20px -apple-system, BlinkMacSystemFont, sans-serif; fill: #374151; }
+    .body { font: 18px -apple-system, BlinkMacSystemFont, sans-serif; fill: #111827; }
+    .small { font: 16px -apple-system, BlinkMacSystemFont, sans-serif; fill: #374151; }
+    .pin { font: 700 18px Menlo, monospace; fill: #111827; }
+    .signal { font: 700 19px -apple-system, BlinkMacSystemFont, sans-serif; fill: #fff; }
+  </style>
+  <rect width="1200" height="840" fill="#f8fafc"/>
+  <text x="60" y="58" class="title">ESP32-WROOM-32E — magistrala IMU</text>
+  <text x="60" y="92" class="subtitle">Widok od góry modułu. Antena jest u góry. Interesuje nas prawa krawędź.</text>
+
+  <rect x="255" y="145" width="430" height="610" rx="16" fill="#1f2937" stroke="#111827" stroke-width="4"/>
+  <rect x="280" y="165" width="380" height="125" rx="4" fill="#0f172a"/>
+  <path d="M 330 185 h 50 v 18 h -34 v 18 h 52 v 18 h -72 v 18 h 92" fill="none" stroke="#94a3b8" stroke-width="7"/>
+  <text x="455" y="245" text-anchor="middle" class="subtitle" fill="#e2e8f0">ANTENA</text>
+  <text x="470" y="350" text-anchor="middle" class="body" fill="#e2e8f0">ESP32-WROOM-32E</text>
+  <text x="470" y="382" text-anchor="middle" class="small" fill="#cbd5e1">górna strona modułu</text>
+
+  <text x="705" y="165" class="body">Prawa krawędź — licz od góry:</text>
+  <g stroke="#475569" stroke-width="2">
+    <rect x="683" y="180" width="52" height="36" fill="#d1d5db"/>
+    <rect x="683" y="224" width="52" height="36" fill="#f97316"/>
+    <rect x="683" y="268" width="52" height="36" fill="#f97316"/>
+    <rect x="683" y="312" width="52" height="36" fill="#d1d5db"/>
+    <rect x="683" y="356" width="52" height="36" fill="#d1d5db"/>
+    <rect x="683" y="400" width="52" height="36" fill="#f97316"/>
+    <rect x="683" y="444" width="52" height="36" fill="#d1d5db"/>
+    <rect x="683" y="488" width="52" height="36" fill="#f97316"/>
+    <rect x="683" y="532" width="52" height="36" fill="#d1d5db"/>
+  </g>
+  <g class="pin">
+    <text x="752" y="205">38  GND</text>
+    <text x="752" y="249">37  GPIO23</text>
+    <text x="752" y="293">36  GPIO22</text>
+    <text x="752" y="337">35  TXD0 — nie ruszać</text>
+    <text x="752" y="381">34  RXD0 — nie ruszać</text>
+    <text x="752" y="425">33  GPIO21</text>
+    <text x="752" y="469">32  NC — nie ruszać</text>
+    <text x="752" y="513">31  GPIO19</text>
+    <text x="752" y="557">30  GPIO18 — serwa, nie ruszać</text>
+  </g>
+
+  <g>
+    <rect x="920" y="220" width="225" height="36" rx="18" fill="#ea580c"/>
+    <text x="1032" y="245" text-anchor="middle" class="signal">MOSI → IMU pin 14</text>
+    <rect x="920" y="264" width="225" height="36" rx="18" fill="#ea580c"/>
+    <text x="1032" y="289" text-anchor="middle" class="signal">SCLK → IMU pin 13</text>
+    <rect x="920" y="396" width="225" height="36" rx="18" fill="#ea580c"/>
+    <text x="1032" y="421" text-anchor="middle" class="signal">CS → IMU pin 12</text>
+    <rect x="920" y="484" width="225" height="36" rx="18" fill="#ea580c"/>
+    <text x="1032" y="509" text-anchor="middle" class="signal">MISO ← IMU pin 1</text>
+  </g>
+  <g stroke="#ea580c" stroke-width="4" fill="none">
+    <path d="M900 242 H905"/>
+    <path d="M900 286 H905"/>
+    <path d="M900 418 H905"/>
+    <path d="M900 506 H905"/>
+  </g>
+
+  <rect x="60" y="645" width="1080" height="135" rx="12" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/>
+  <text x="88" y="683" class="body">Lutuj / sprawdź wyłącznie cztery pola oznaczone na pomarańczowo:</text>
+  <text x="88" y="718" class="pin">37 GPIO23 = MOSI    ·    36 GPIO22 = SCLK    ·    33 GPIO21 = CS    ·    31 GPIO19 = MISO</text>
+  <text x="88" y="753" class="small">Piny są na tej samej, prawej krawędzi modułu. Zachowaj R17: 10 kΩ z CS/GPIO21 do +3,3 V.</text>
+</svg>

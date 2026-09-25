@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key><string>Aura</string>
+    <key>CFBundleExecutable</key><string>MainBoardControl</string>
+    <key>CFBundleIdentifier</key><string>pl.nyderek.mainboard-control.release</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Aura</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.9.0</string>
+    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Aura łączy się z płytką Aura Main Board, aby odczytywać czujniki i sterować serwami oraz LED-ami.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Aura wyszukuje płytkę w sieci lokalnej i przesyła telemetrię oraz polecenia.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+    </dict>
+    <key>NSBonjourServices</key><array><string>_aura._tcp</string></array>
+</dict>
+</plist>

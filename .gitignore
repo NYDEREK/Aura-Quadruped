@@ -1,0 +1,24 @@
+# ESP-IDF
+/build/
+/managed_components/
+/sdkconfig.old
+diagnostics/**/build/
+
+# Sekrety – skopiuj main/wifi_credentials.example.h -> main/wifi_credentials.h
+/main/wifi_credentials.h
+
+# Aplikacja macOS
+/desktop/MainBoardControl/dist/
+
+# Gazebo
+/gazebo/build/
+/tools/
+
+# Inne
+.DS_Store
+__pycache__/
+/backups/
+/logs/
+/tmp/
+# Zewnętrzna biblioteka: github.com/Barsy-Barsevich/ICM42688_Barsotion
+diagnostics/icm_barsotion_test/main/barsotion/
