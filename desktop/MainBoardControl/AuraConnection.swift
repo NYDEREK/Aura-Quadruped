@@ -239,7 +239,7 @@ struct AuraGaitProfile: Equatable, Identifiable {
     }
 
     static let defaults: [AuraGaitProfile] = [
-        .init(gait: 1, strideMm: 80, stepHeightMm: 58, frequencyCentiHz: 140, dutyPercent: 58),
+        .init(gait: 1, strideMm: 50, stepHeightMm: 35, frequencyCentiHz: 200, dutyPercent: 55),
         .init(gait: 2, strideMm: 50, stepHeightMm: 30, frequencyCentiHz: 65, dutyPercent: 82),
         .init(gait: 3, strideMm: 90, stepHeightMm: 72, frequencyCentiHz: 190, dutyPercent: 52),
         .init(gait: 4, strideMm: 50, stepHeightMm: 82, frequencyCentiHz: 65, dutyPercent: 82),

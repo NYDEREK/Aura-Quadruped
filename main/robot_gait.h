@@ -104,6 +104,9 @@ typedef struct {
     uint32_t planner_last_us, planner_max_us, planner_overruns, target_frame_drops;
     uint8_t phase_rate_percent;
     uint16_t effective_frequency_centi_hz;
+    // Cheetah 3 eq. (6) capture-point offset applied to swinging feet (mm).
+    int16_t capture_offset_x_mm;
+    int16_t capture_offset_z_mm;
 } robot_gait_snapshot_t;
 
 esp_err_t robot_gait_init(void);

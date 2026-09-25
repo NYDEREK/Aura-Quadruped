@@ -75,5 +75,8 @@ bool robot_body_trajectory_solve(robot_body_trajectory_t *plan,
                                  float com_height_mm, float cycle_seconds);
 bool robot_body_trajectory_build(robot_body_trajectory_t *plan,
                                  const robot_body_trajectory_request_t *request);
+// True when `plan` was built for exactly this request (no rebuild needed).
+bool robot_body_trajectory_matches(const robot_body_trajectory_t *plan,
+                                   const robot_body_trajectory_request_t *request);
 robot_body_trajectory_sample_t robot_body_trajectory_sample(const robot_body_trajectory_t *plan,
                                                             float global_phase);

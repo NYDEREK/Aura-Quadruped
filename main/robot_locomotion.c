@@ -54,11 +54,13 @@ robot_locomotion_profile_t robot_locomotion_default_profile(uint8_t gait)
             .duty_percent = 82,
         };
     case GAIT_TROT:
-        // 58% deliberately gives an overlap of four supports at the pair
-        // transition. It is usable by position-controlled ST3215 servos.
+        // A trot stands on one diagonal line during swing; with the LIPM time
+        // constant sqrt(h/g) ~ 0.15 s that phase must stay short. 2 Hz / 55 %
+        // gives ~0.25 s of swing (ACC = 0), inside the range where the
+        // capture-point foot placement recovers (tests/test_robot_foot_placement.c).
         return (robot_locomotion_profile_t){
-            .stride_mm = 80, .step_height_mm = 58, .frequency_centi_hz = 140,
-            .duty_percent = 58,
+            .stride_mm = 50, .step_height_mm = 35, .frequency_centi_hz = 200,
+            .duty_percent = 55,
         };
     case GAIT_RUN:
         // "Run" here is a fast diagonal gait without a flight phase. A true

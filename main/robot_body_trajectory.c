@@ -247,6 +247,12 @@ static float joint_path_scale(const robot_body_trajectory_t *plan,
                  sqrtf(r->joint_acceleration_limit/fmaxf(amax,0.0001f)));
 }
 
+bool robot_body_trajectory_matches(const robot_body_trajectory_t *p,
+                                   const robot_body_trajectory_request_t *r)
+{
+    return p && r && p->request_cached && same_request(&p->request, r);
+}
+
 bool robot_body_trajectory_build(robot_body_trajectory_t *p,
                                  const robot_body_trajectory_request_t *r)
 {

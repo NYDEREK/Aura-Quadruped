@@ -20,6 +20,7 @@ cases = {
     'servo_protocol': ['servo_protocol'],
     'dualsense_report': [],
     'robot_odometry': ['robot_odometry'],
+    'robot_foot_placement': ['robot_foot_placement'],
 }
 with tempfile.TemporaryDirectory(prefix='aura-host-tests-') as temporary:
     for name, units in cases.items():
@@ -28,6 +29,10 @@ with tempfile.TemporaryDirectory(prefix='aura-host-tests-') as temporary:
                         f'tests/test_{name}.c', *[f'main/{unit}.c' for unit in units], '-lm',
                         '-o', binary], cwd=root, check=True)
         subprocess.run([binary], cwd=root, check=True)
+    import shutil
+    if shutil.which('xcrun') is None:
+        print(f'{len(cases)} C suites passed; Swift telemetry test skipped (no xcrun).')
+        raise SystemExit(0)
     binary = str(pathlib.Path(temporary) / 'telemetry')
     subprocess.run(['xcrun', 'swiftc', '-O', 'desktop/MainBoardControl/RobotTelemetry.swift',
                     'tests/test_robot_telemetry.swift', '-o', binary], cwd=root, check=True)

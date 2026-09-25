@@ -91,13 +91,12 @@ static void test_trot_cycle(void)
     double old_squared_error=0, new_squared_error=0;
     for (int i = 0; i < N; ++i) {
         const float phase=(float)i/N;
-        robot_planar_point_t feet[4]; bool contact[4]; float weights[4];
+        robot_planar_point_t feet[4]; bool contact[4];
         for (int leg=0; leg<4; ++leg) {
             const robot_vec3_t f=robot_body_trajectory_foot(&r,(robot_leg_t)leg,phase);
             feet[leg]=(robot_planar_point_t){f.x,f.z};
             const robot_locomotion_leg_phase_t p=robot_locomotion_leg_phase(1,(robot_leg_t)leg,phase,&r.profile);
             contact[leg]=p.support_contact;
-            weights[leg]=robot_predictive_support_availability(p.local_phase,0.58f);
         }
         const float dp=0.0005f, dt=dp/robot_locomotion_frequency_hz(&r.profile);
         const robot_body_trajectory_sample_t s=robot_body_trajectory_sample(&plan,phase);

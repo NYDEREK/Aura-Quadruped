@@ -247,3 +247,13 @@ Dodatkowe źródło transformacji sztywnych: Murray, Li, Sastry,
 rozdział o wykładnikach ruchu sztywnego. Filtr wejścia polecenia odpowiada
 współczynnikowi 0.1 w `ConvexMPCLocomotion::_SetupCommand`, zapisany jako
 stała czasowa dla okresu 20 ms; nie filtruje przycisków pada.
+
+## Stawianie stóp — Cheetah 3, równanie (6) (2026-09-26)
+
+`p_step = p_hip + T_st/2·v_des + sqrt(z0/g)·(v − v_des)`. Dwa pierwsze człony to
+istniejąca, zaplanowana trajektoria stopy. Trzeci (capture point, Pratt i in.)
+liczy `robot_foot_placement.c` z żyroskopu: przy podpartych stopach nieplanowany
+obrót korpusu to przewracanie wokół linii podparcia, więc środek masy na wysokości
+z0 porusza się z v = z0·ω. Do tego dryf `z0·(przechył − referencja − korekcja)`,
+bo w równaniu p_hip jest rzeczywistym położeniem biodra. Szczegóły i testy:
+[kinematics-review.md](kinematics-review.md).

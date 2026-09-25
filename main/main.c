@@ -152,6 +152,7 @@ static void print_status(void)
     printf("Planner: last=%lu us max=%lu us overruns=%lu frame_drops=%lu (20 ms budget) frequency=%u cHz\n",
            (unsigned long)gait.planner_last_us,(unsigned long)gait.planner_max_us,
            (unsigned long)gait.planner_overruns,(unsigned long)gait.target_frame_drops,gait.effective_frequency_centi_hz);
+    printf("Capture point: offset x=%d z=%d mm\n", gait.capture_offset_x_mm, gait.capture_offset_z_mm);
     printf("Servo feedback: %u/%u live, %u moving, largest target error %.1f deg\n",
            feedback_axes, assigned_axes, moving_axes, maximum_tracking_error * 180.0f / 3.14159265f);
     aura_network_print_status();
