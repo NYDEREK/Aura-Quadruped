@@ -77,18 +77,25 @@ static void network_task(void *arg)
     uint8_t input[22];
     size_t used = 0;
     TickType_t next_retry = 0;
+    uint32_t retry_interval_ms = 10000u;
     while (running) {
         if (!has_ip) {
             xSemaphoreTake(socket_lock, portMAX_DELAY); close_client(); xSemaphoreGive(socket_lock);
             used = 0;
             TickType_t now = xTaskGetTickCount();
             if ((int32_t)(now - next_retry) >= 0) {
+                // Every connect attempt scans all channels and takes airtime
+                // from the DualSense Classic-BT link on the shared antenna.
+                // Back off (10 s -> 120 s) while the network is absent so a
+                // missing AP never degrades the pad; reset on success.
                 esp_wifi_connect();
-                next_retry = now + pdMS_TO_TICKS(10000);
+                next_retry = now + pdMS_TO_TICKS(retry_interval_ms);
+                if (retry_interval_ms < 120000u) retry_interval_ms *= 2u;
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        retry_interval_ms = 10000u;
         xSemaphoreTake(socket_lock, portMAX_DELAY);
         int fd = client;
         xSemaphoreGive(socket_lock);
@@ -149,6 +156,9 @@ esp_err_t aura_network_start(aura_network_command_cb callback)
     strlcpy((char *)config.sta.ssid, AURA_WIFI_SSID, sizeof(config.sta.ssid));
     strlcpy((char *)config.sta.password, AURA_WIFI_PASSWORD, sizeof(config.sta.password));
     config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    // WPA2/WPA3 transition routers (e.g. HALNy) advertise PMF.
+    config.sta.pmf_cfg.capable = true;
+    config.sta.pmf_cfg.required = false;
     esp_err_t result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, &config);

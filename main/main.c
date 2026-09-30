@@ -9,6 +9,7 @@
 #include "driver/uart_vfs.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -121,8 +122,26 @@ static void print_help(void)
            "Servo configuration is available through Wi-Fi.\n");
 }
 
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "PANIC/crash";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT: return "other watchdog";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (supply dip)";
+    case ESP_RST_EXT: return "external/EN pin";
+    default: return "other";
+    }
+}
+
 static void print_status(void)
 {
+    printf("System: uptime=%llu s reset=%s pad_loss_disarms=%lu\n",
+           (unsigned long long)(esp_timer_get_time() / 1000000), reset_reason_name(esp_reset_reason()),
+           (unsigned long)aura_radio_pad_loss_disarms());
     dualsense_snapshot_t controller;
     dualsense_get_snapshot(&controller);
     printf("DualSense: state=%d saved=%d reports=%lu\n", controller.state, controller.has_saved_controller, (unsigned long)controller.sample_count);
@@ -434,6 +453,7 @@ static void vin_radio_guard_task(void *argument)
 
 void app_main(void)
 {
+    printf("Aura boot: reset reason = %s\n", reset_reason_name(esp_reset_reason()));
     ESP_ERROR_CHECK(app_state_init());
 
     // Configure the fitted LED first. HIGH means on per the schematic.

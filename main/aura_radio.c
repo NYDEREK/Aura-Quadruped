@@ -141,6 +141,8 @@ static bool controller_running;
 static bool bluedroid_running;
 static bool create_was_pressed;
 static bool controller_was_available;
+static uint32_t pad_loss_disarms;
+uint32_t aura_radio_pad_loss_disarms(void) { return pad_loss_disarms; }
 static const uint16_t telemetry_handle = 1;
 static const uint16_t event_handle = 2;
 static uint8_t last_power[AURA_FRAME_SIZE];
@@ -161,7 +163,10 @@ static void process_create_arm_switch(void)
     if (!available) {
         if (controller_was_available && robot_control_is_armed()) {
             const esp_err_t result = robot_control_disarm();
-            ESP_LOGW(TAG, "DualSense lost; robot disarmed: %s", esp_err_to_name(result));
+            ++pad_loss_disarms;
+            ESP_LOGW(TAG, "DualSense lost (state=%d fresh=%d); robot disarmed: %s (count=%lu)",
+                     controller.state, controller.has_input, esp_err_to_name(result),
+                     (unsigned long)pad_loss_disarms);
         }
         create_was_pressed = false;
         controller_was_available = false;
