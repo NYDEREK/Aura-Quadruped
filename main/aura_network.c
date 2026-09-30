@@ -1,4 +1,5 @@
 #include "aura_network.h"
+#include "robot_control.h"
 #include "wifi_credentials.h"
 #include <errno.h>
 #include <string.h>
@@ -83,7 +84,10 @@ static void network_task(void *arg)
             xSemaphoreTake(socket_lock, portMAX_DELAY); close_client(); xSemaphoreGive(socket_lock);
             used = 0;
             TickType_t now = xTaskGetTickCount();
-            if ((int32_t)(now - next_retry) >= 0) {
+            // While the robot is armed and walking standalone, never start a
+            // Wi-Fi scan: it only serves the optional desktop app, and its
+            // airtime belongs to the DualSense link that drives the robot.
+            if (!robot_control_is_armed() && (int32_t)(now - next_retry) >= 0) {
                 // Every connect attempt scans all channels and takes airtime
                 // from the DualSense Classic-BT link on the shared antenna.
                 // Back off (10 s -> 120 s) while the network is absent so a
