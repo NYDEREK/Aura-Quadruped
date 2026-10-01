@@ -26,6 +26,7 @@
 #include "robot_odometry.h"
 #include "mpu6050.h"
 #include "robot_foot_placement.h"
+#include "robot_com_estimate.h"
 
 #define ROBOT_GAIT_PERIOD_MS 20
 #define ROBOT_GAIT_VIRTUAL_INPUT_TIMEOUT_US 300000
@@ -114,6 +115,13 @@
 #define ROBOT_ATTITUDE_MOVING_SLEW_RAD_S (35.0f * ROBOT_PI / 180.0f)
 #define ROBOT_ATTITUDE_MOVING_ACCEL_RAD_S2 (220.0f * ROBOT_PI / 180.0f)
 #define ROBOT_ATTITUDE_FRESH_US 120000
+// Integral gains of the posture PI loop (1/s). Standing: residual tilt decays
+// with ~0.25 s on top of the proportional response; walking is gentler so the
+// loop does not chase the periodic sway of the gait.
+#define ROBOT_ATTITUDE_STANDING_KI 4.0f
+#define ROBOT_ATTITUDE_MOVING_KI 1.5f
+// Standing CoM centring: time constant of the torso shift (s).
+#define ROBOT_STAND_COM_TIME_S 0.30f
 #define ROBOT_MOTION_TUNING_DEFAULT_ATTITUDE_GAIN_PER_MILLE 450U
 #define ROBOT_MOTION_TUNING_MIN_ATTITUDE_GAIN_PER_MILLE 100U
 #define ROBOT_MOTION_TUNING_MAX_ATTITUDE_GAIN_PER_MILLE 1000U
@@ -219,6 +227,7 @@ static robot_vec3_t static_crawl_to_body_shift;
 // `dynamic_balance_shift` is the VPSP position target for this phase, not a
 // separate balance controller.
 static robot_vec3_t dynamic_balance_shift;
+static robot_vec3_t stand_com_shift;
 static robot_body_trajectory_t body_trajectory;
 static float tripod_body_height_mm;
 static struct {
@@ -234,6 +243,8 @@ static struct {
     float reference_pitch_radians;
     float correction_roll_radians;
     float correction_pitch_radians;
+    float integral_roll_radians;
+    float integral_pitch_radians;
 } attitude_control = {
     .enabled = true,
 };
@@ -1017,6 +1028,8 @@ static void update_attitude_reference_capture(bool armed, bool operator_idle,
     attitude_control.reference_settled_ticks = 0;
     attitude_control.correction_roll_radians = 0.0f;
     attitude_control.correction_pitch_radians = 0.0f;
+    attitude_control.integral_roll_radians = 0.0f;
+    attitude_control.integral_pitch_radians = 0.0f;
     joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
     joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     ESP_LOGI("robot_gait", "IMU attitude reference captured after neutral stance settled");
@@ -1048,6 +1061,8 @@ static void update_attitude_controller(bool armed, bool moving)
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
+        attitude_control.integral_roll_radians = 0.0f;
+        attitude_control.integral_pitch_radians = 0.0f;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     } else {
@@ -1067,10 +1082,14 @@ static void update_attitude_controller(bool armed, bool moving)
             // default for these position servos, not a gain copied from MIT's
             // torque controller. The known-good standing controller is intact.
             const float kd = moving ? 0.08f : 0.0f;
-            const float desired_roll = robot_balance_posture_target(roll_error,
-                measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
-            const float desired_pitch = robot_balance_posture_target(pitch_error,
-                measured.pitch_rate_rad_s, proportional_gain, kd, correction_limit);
+            // PI: the integral removes the steady error a P-only loop leaves
+            // because the IMU measures its own correction (see robot_balance.h).
+            const float ki = moving ? ROBOT_ATTITUDE_MOVING_KI : ROBOT_ATTITUDE_STANDING_KI;
+            const float loop_dt = (float)ROBOT_GAIT_PERIOD_MS / 1000.0f;
+            const float desired_roll = robot_balance_posture_pi(&attitude_control.integral_roll_radians,
+                roll_error, measured.roll_rate_rad_s, proportional_gain, ki, kd, correction_limit, loop_dt);
+            const float desired_pitch = robot_balance_posture_pi(&attitude_control.integral_pitch_radians,
+                pitch_error, measured.pitch_rate_rad_s, proportional_gain, ki, kd, correction_limit, loop_dt);
             const joint_trajectory_limits_t posture_limits = {
                 .maximum_velocity = moving ? ROBOT_ATTITUDE_MOVING_SLEW_RAD_S
                                             : ROBOT_ATTITUDE_STANDING_SLEW_RAD_S,
@@ -1599,6 +1618,23 @@ static void gait_tick(void)
         const float transfer = smootherstep(fminf(1, tripod_walk_entry * 2));
         planned_body_shift.x *= transfer; planned_body_shift.z *= transfer;
     }
+    // Standing: put the calibrated CoM (rotated by the current posture
+    // correction) over the centre of the four-foot support polygon. Before
+    // this the torso stayed geometrically centred while standing, so a CoM
+    // offset (rear battery) was only compensated once a gait started.
+    // Walking plans already subtract the same offset, so the hand-over is
+    // continuous: the filter state follows the walking shift while moving.
+    const bool standing_balance = armed && trajectory_initialized && !motion_active &&
+        !tripod_active && !use_static_crawl && !jumping && !tripod_walk_enabled;
+    if (standing_balance) {
+        const float a = -expm1f(-((float)ROBOT_GAIT_PERIOD_MS / 1000.0f) / ROBOT_STAND_COM_TIME_S);
+        stand_com_shift.x += a * (-projected_com.x - stand_com_shift.x);
+        stand_com_shift.z += a * (-projected_com.z - stand_com_shift.z);
+        planned_body_shift.x += stand_com_shift.x;
+        planned_body_shift.z += stand_com_shift.z;
+    } else {
+        stand_com_shift = armed ? planned_body_shift : (robot_vec3_t){0};
+    }
     state.body_shift_x_mm = planned_body_shift.x;
     state.body_shift_z_mm = planned_body_shift.z;
     const robot_body_pose_t body_pose = {
@@ -1968,6 +2004,8 @@ esp_err_t robot_gait_arm(void)
         attitude_control.reference_settled_ticks = 0;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
+        attitude_control.integral_roll_radians = 0.0f;
+        attitude_control.integral_pitch_radians = 0.0f;
         attitude_control.active = false;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
@@ -2201,6 +2239,8 @@ esp_err_t robot_gait_set_attitude_balance_enabled(bool enabled)
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
+        attitude_control.integral_roll_radians = 0.0f;
+        attitude_control.integral_pitch_radians = 0.0f;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     }
@@ -2310,4 +2350,44 @@ esp_err_t robot_gait_set_tripod_walk(bool enabled, robot_leg_t excluded)
     }
     xSemaphoreGive(gait_mutex);
     return result;
+}
+
+void robot_gait_get_static_balance(int16_t *com_forward_mm, int16_t *com_left_mm,
+                                   uint16_t *support_margin_mm)
+{
+    if (com_forward_mm) *com_forward_mm = static_com_forward_mm;
+    if (com_left_mm) *com_left_mm = static_com_left_mm;
+    if (support_margin_mm) *support_margin_mm = static_support_margin_mm;
+}
+
+esp_err_t robot_gait_measure_com(int16_t *com_forward_mm, int16_t *com_left_mm)
+{
+    if (!com_forward_mm || !com_left_mm) return ESP_ERR_INVALID_ARG;
+    if (!robot_control_is_armed()) return ESP_ERR_INVALID_STATE;
+    robot_gait_snapshot_t gait = {0};
+    robot_gait_snapshot(&gait);
+    // Only a still, four-foot stance satisfies the static moment balance.
+    if (gait.active_gait != ROBOT_GAIT_STAND || gait.input_forward_milli || gait.input_lateral_milli ||
+        gait.input_turn_milli || gait.jumping) return ESP_ERR_INVALID_STATE;
+    robot_model_t model = {0};
+    robot_control_snapshot(&model);
+    const int64_t now = esp_timer_get_time();
+    robot_vec3_t feet[ROBOT_LEG_COUNT];
+    float weight[ROBOT_LEG_COUNT];
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        float q[ROBOT_AXIS_COUNT];
+        for (int axis = 0; axis < ROBOT_AXIS_COUNT; ++axis) {
+            const robot_axis_state_t *servo = &model.axis[leg][axis];
+            if (!servo->present || servo->feedback_time_us <= 0 ||
+                now - servo->feedback_time_us > 200000) return ESP_ERR_TIMEOUT;
+            q[axis] = servo->measured_radians;
+        }
+        feet[leg] = robot_kinematics_forward(&geometry, (robot_leg_t)leg, q, 0.0f);
+        weight[leg] = (float)model.axis[leg][ROBOT_AXIS_KNEE].measured_load_raw;
+    }
+    robot_planar_point_t com;
+    if (!robot_com_estimate(feet, weight, &com)) return ESP_ERR_INVALID_RESPONSE;
+    *com_forward_mm = (int16_t)lroundf(com.x);
+    *com_left_mm = (int16_t)lroundf(com.z);
+    return ESP_OK;
 }

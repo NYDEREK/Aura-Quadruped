@@ -112,4 +112,28 @@ static void test_angular_feedback(void)
     assert(robot_balance_posture_target(-1,2,.45f,.08f,.35f)==-.35f);
     assert(robot_balance_posture_target(.1f,2,1,0,.35f)==.1f); // standing unchanged
 }
-int main(void){test_swing_clearance();test_tripod();test_angular_feedback();puts("robot balance: passed");}
+// The IMU measures its own correction: measured = floor + c. A P-only law
+// leaves half of a floor tilt; the PI law levels the torso completely.
+static void test_posture_pi_levels_fully(void)
+{
+    const float floor = 0.10f, dt = 0.02f, limit = 0.35f;
+    float c_p = 0, c_pi = 0, integral = 0;
+    for (int i = 0; i < 500; ++i) {
+        // A first-order servo/slew lag between command and torso.
+        const float target_p = robot_balance_posture_target(0 - (floor + c_p), 0, 1.0f, 0, limit);
+        const float target_pi = robot_balance_posture_pi(&integral, 0 - (floor + c_pi), 0,
+                                                         1.0f, 4.0f, 0, limit, dt);
+        c_p += (target_p - c_p) * 0.2f;
+        c_pi += (target_pi - c_pi) * 0.2f;
+    }
+    printf("posture: floor tilt 5.7 deg -> residual P-only %.2f deg, PI %.2f deg\n",
+           (floor + c_p) * 57.2958f, (floor + c_pi) * 57.2958f);
+    assert(fabsf(floor + c_p - floor / 2) < 0.002f);
+    assert(fabsf(floor + c_pi) < 0.002f);
+    // Anti-windup: a saturated loop must not keep integrating.
+    integral = 0;
+    for (int i = 0; i < 500; ++i) (void)robot_balance_posture_pi(&integral, 1.0f, 0, 1, 4, 0, limit, dt);
+    assert(integral <= limit + 1e-6f);
+}
+
+int main(void){test_swing_clearance();test_tripod();test_angular_feedback();test_posture_pi_levels_fully();puts("robot balance: passed");}

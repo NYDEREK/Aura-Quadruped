@@ -28,3 +28,11 @@ robot_vec3_t robot_balance_swing_target(robot_vec3_t world, robot_balance_pose_t
 // Returned angle uses the existing Aura gravity/servo convention.
 float robot_balance_posture_target(float error, float angular_rate,
                                    float kp, float kd_seconds, float limit);
+
+// PI posture loop. The IMU sits on the torso, so the measured tilt already
+// contains the correction this loop commands (measured = floor + c). A pure
+// P law c = kp*e therefore settles at c = -kp/(1+kp) * floor: with kp = 1
+// only HALF of a floor tilt was ever removed. The integral term drives the
+// residual error to zero. `integral` is the controller state (radians).
+float robot_balance_posture_pi(float *integral, float error, float rate,
+                               float kp, float ki, float kd, float limit, float dt);

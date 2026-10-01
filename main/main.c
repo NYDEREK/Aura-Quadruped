@@ -28,6 +28,10 @@
 #include "tof.h"
 #include "ws2812.h"
 
+static void com_measure_command(void);
+static void com_save_command(void);
+static void com_show_command(void);
+
 #define CONSOLE_UART UART_NUM_0
 #define LINE_SIZE 96
 #define RADIO_VIN_ENABLE_V 7.0f
@@ -118,8 +122,51 @@ static void print_help(void)
            "  gait virtual off  - return gait input to the paired pad\n"
            "  gait virtual F [L T H] - virtual sticks, each -1000..1000\n"
            "  tof retry         - detect both VL53L4CD sensors again\n"
+           "  com measure       - CoM from servo loads (armed, mode 0, standing still)\n"
+           "  com save | com show - store (disarmed) / print the CoM offset\n"
            "  ble retry         - restart radios; both require external VIN > 7.0 V\n"
            "Servo configuration is available through Wi-Fi.\n");
+}
+
+static bool com_measured;
+static int16_t com_measured_x, com_measured_z;
+
+// Averages 20 load-distribution samples over ~2 s while Aura stands still.
+static void com_measure_command(void)
+{
+    long sum_x = 0, sum_z = 0; int valid = 0; esp_err_t last = ESP_OK;
+    for (int i = 0; i < 20; ++i) {
+        int16_t x = 0, z = 0;
+        last = robot_gait_measure_com(&x, &z);
+        if (last == ESP_OK) { sum_x += x; sum_z += z; ++valid; }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (valid < 10) {
+        printf("CoM measure failed (%d/20 samples, last: %s). Arm, mode 0, sticks centred, all feet on the ground.\n",
+               valid, esp_err_to_name(last));
+        return;
+    }
+    com_measured_x = (int16_t)(sum_x / valid); com_measured_z = (int16_t)(sum_z / valid);
+    com_measured = true;
+    int16_t x = 0, z = 0; robot_gait_get_static_balance(&x, &z, NULL);
+    printf("CoM from servo loads: forward=%d mm left=%d mm (%d samples). Stored now: %d / %d mm.\n"
+           "Disarm, then 'com save' to store it.\n", com_measured_x, com_measured_z, valid, x, z);
+}
+
+static void com_save_command(void)
+{
+    if (!com_measured) { printf("Run 'com measure' first.\n"); return; }
+    uint16_t margin = 0; robot_gait_get_static_balance(NULL, NULL, &margin);
+    const esp_err_t result = robot_gait_set_static_balance(com_measured_x, com_measured_z, margin);
+    printf("CoM save %d / %d mm: %s%s\n", com_measured_x, com_measured_z, esp_err_to_name(result),
+           result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
+}
+
+static void com_show_command(void)
+{
+    int16_t x = 0, z = 0; uint16_t margin = 0;
+    robot_gait_get_static_balance(&x, &z, &margin);
+    printf("Stored CoM offset: forward=%d mm left=%d mm, support margin=%u mm\n", x, z, margin);
 }
 
 static const char *reset_reason_name(esp_reset_reason_t reason)
@@ -322,6 +369,9 @@ static void execute_command(char *line)
     else if (!strcmp(line, "robot disarm"))
         printf("Robot disarm: %s\n", esp_err_to_name(robot_control_disarm()));
     else if (!strncmp(line, "gait virtual ", 13)) gait_virtual_command(line + 13);
+    else if (!strcmp(line, "com measure")) com_measure_command();
+    else if (!strcmp(line, "com save")) com_save_command();
+    else if (!strcmp(line, "com show")) com_show_command();
     else if (!strncmp(line, "servo ping ", 11)) servo_command(false, line + 11);
     else if (!strncmp(line, "servo read ", 11)) servo_command(true, line + 11);
     else if (!strcmp(line, "imu retry")) {

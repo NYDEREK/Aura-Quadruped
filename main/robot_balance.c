@@ -54,3 +54,16 @@ float robot_balance_posture_target(float error, float rate, float kp, float kd, 
     if (!isfinite(error) || !isfinite(rate)) return 0;
     return clamp(kp*error - kd*rate, -limit, limit);
 }
+
+float robot_balance_posture_pi(float *integral, float error, float rate,
+                               float kp, float ki, float kd, float limit, float dt)
+{
+    if (!integral || !isfinite(error) || !isfinite(rate) || !isfinite(dt) || dt <= 0) return 0;
+    if (!isfinite(*integral)) *integral = 0;
+    // Conditional integration (anti-windup): stop integrating while the
+    // output is saturated in the direction of the error.
+    const float unsaturated = kp*error + *integral - kd*rate;
+    if (!((unsaturated >= limit && error > 0) || (unsaturated <= -limit && error < 0)))
+        *integral = clamp(*integral + ki*error*dt, -limit, limit);
+    return clamp(kp*error + *integral - kd*rate, -limit, limit);
+}

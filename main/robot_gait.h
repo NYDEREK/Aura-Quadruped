@@ -144,6 +144,13 @@ esp_err_t robot_gait_set_static_balance(int16_t com_forward_mm,
 // Extra lateral placement of each foot after the physical ab/ad link.  The
 // value is persisted only while disarmed and never writes a servo target.
 esp_err_t robot_gait_set_lateral_stance_mm(int16_t stance_mm);
+
+// CoM from servo load distribution (see robot_com_estimate.h). One sample;
+// requires an armed robot standing still in mode 0 with live feedback.
+esp_err_t robot_gait_measure_com(int16_t *com_forward_mm, int16_t *com_left_mm);
+// Currently stored torso-frame CoM offset and support margin.
+void robot_gait_get_static_balance(int16_t *com_forward_mm, int16_t *com_left_mm,
+                                   uint16_t *support_margin_mm);
 int16_t robot_gait_get_lateral_stance_mm(void);
 // Enables the measured-body-attitude loop for the next arm cycle. This is a
 // commissioning setting: it is persisted only while disarmed and never sends

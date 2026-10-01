@@ -51,3 +51,11 @@ Bez zmian w planie: fizycznie przy jednej nodze stale w górze każdy krok zosta
 3. Trot w miejscu bez trzymania, potem lekkie pchnięcie w bok — robot powinien zrobić krok w stronę pchnięcia.
 4. Jeśli serwa po ACC = 0 drgają/stukają: zgłoś — wtedy dobierzemy ACC (np. 150) i limit planera.
 5. Dla własnych profili trotu: celuj w ~1,8–2,2 Hz, duty 52–58 %, krok 40–60 mm, wysokość 30–40 mm.
+
+## Balans w staniu — 1.10.2026
+
+1. **Regulator postawy był tylko P i usuwał połowę przechyłu.** IMU siedzi na korpusie, więc mierzy także własną korekcję (`zmierzone = podłoże + c`). Prawo `c = kp·e` przy kp = 1 ustala się na `c = −podłoże/2`. Teraz PI z anti-windupem (`robot_balance_posture_pi`), Ki = 4/s w staniu, 1,5/s w chodzie — przechył spada do zera (test: 5,7° → P 2,86°, PI 0,00°).
+2. **W staniu środek masy nie był nad środkiem podparcia.** Offset CoM był używany tylko przez plan chodu; w staniu korpus stał geometrycznie na środku. Teraz w trybie 0 korpus płynnie (τ = 0,3 s) przesuwa się o `−CoM`, a przejście do chodu jest ciągłe.
+3. **Offset CoM w NVS wynosił 0** (klucze `com_x_mm/com_z_mm` nigdy nie zapisane) — punkt 2 nic nie robi, dopóki CoM nie jest ustawiony. Nowe komendy UART:
+   - `com measure` — robot uzbrojony, tryb 0, gałki puszczone: 20 próbek obciążenia kolan → CoM z równowagi momentów (`robot_com_estimate.c`),
+   - `com save` — po rozbrojeniu zapisuje zmierzony CoM, `com show` — pokazuje zapisany.

@@ -21,6 +21,7 @@ cases = {
     'dualsense_report': [],
     'robot_odometry': ['robot_odometry'],
     'robot_foot_placement': ['robot_foot_placement'],
+    'robot_com_estimate': ['robot_com_estimate'],
 }
 with tempfile.TemporaryDirectory(prefix='aura-host-tests-') as temporary:
     for name, units in cases.items():
