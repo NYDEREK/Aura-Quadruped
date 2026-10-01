@@ -13,6 +13,10 @@ final class FirmwareUpdater: ObservableObject {
     @Published var running = false
     @Published var lastResult: Int32?
     @Published var commit = ""
+    // View state lives here: the command-line toolchain has no SwiftUI
+    // macro plugin, so @State cannot be used in this app.
+    @Published var pullFirst = true
+    @Published var confirm = false
 
     // build.sh records the repository path in the bundle.
     let projectPath: String? = {
@@ -88,8 +92,6 @@ final class FirmwareUpdater: ObservableObject {
 struct FirmwareView: View {
     @EnvironmentObject private var aura: AuraConnection
     @StateObject private var updater = FirmwareUpdater()
-    @State private var pullFirst = true
-    @State private var confirm = false
 
     private var armed: Bool { aura.isConnected && aura.robotState.armed }
 
@@ -104,12 +106,12 @@ struct FirmwareView: View {
                         Text("Nie znam ścieżki do repozytorium Aura-Quadruped. Zbuduj aplikację przez desktop/MainBoardControl/build.sh.")
                             .foregroundStyle(.orange)
                     }
-                    Toggle("Najpierw pobierz najnowszy kod z GitHuba (git pull)", isOn: $pullFirst)
+                    Toggle("Najpierw pobierz najnowszy kod z GitHuba (git pull)", isOn: $updater.pullFirst)
                     Text("Podłącz Aurę kablem USB-C. Wgrywanie nie kasuje kalibracji serw ani ustawień — kopia pamięci ustawień trafia do backups/.")
                         .font(.callout).foregroundStyle(.secondary)
                     HStack {
                         Button {
-                            confirm = true
+                            updater.confirm = true
                         } label: {
                             Label("Wgraj najnowszy kod do Aury", systemImage: "arrow.down.circle.fill")
                         }
@@ -144,9 +146,9 @@ struct FirmwareView: View {
         }
         .padding(16)
         .onAppear { updater.refreshCommit() }
-        .alert("Wgrać firmware do Aury?", isPresented: $confirm) {
+        .alert("Wgrać firmware do Aury?", isPresented: $updater.confirm) {
             Button("Wgraj") {
-                updater.flash(pull: pullFirst) { ok in
+                updater.flash(pull: updater.pullFirst) { ok in
                     // The ESP restarts after flashing; reconnect once it is back.
                     DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 8 : 1)) { aura.reconnect() }
                 }
