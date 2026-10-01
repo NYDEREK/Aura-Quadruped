@@ -9,6 +9,7 @@ Streszczenie pracy z czatu „Aura Main Board Code” (13–25.09.2026). Hasła 
 - I²C (SDA GPIO25, SCL GPIO26): INA226 (0x40) — pomiar prądu/mocy serw; MPU6050 na złączu S1 (INT na linii XSHUT1 = GPIO14); VL53L4CD na S2 (XSHUT GPIO15, adres przenoszony na 0x31).
 - Pomiar VIN: GPIO34 (ADC1_CH6), dzielnik 100k/22k. Radio (Wi‑Fi + BT) startuje dopiero przy VIN > 7 V — na samym USB Bluetooth się nie podnosił.
 - WS2812: GPIO32.
+- **Start po włączeniu baterii (1.10.2026):** ESP wchodził w tryb wgrywania, bo C23 (1 µF na GPIO0) i C14 (1 µF na EN) ładowały się w tym samym tempie — GPIO0 był jeszcze niski, gdy EN puszczał układ. **C23 wylutowany** — Aura startuje sama. W kolejnej wersji PCB: bez kondensatora na GPIO0, na EN 10 kΩ + ~4,7 µF.
 - ICM‑42688‑P (klon HXY) na SPI nigdy nie odpowiedział poprawnie mimo kilku wymian układu i przecięcia GND na pinach 9/11 — zastąpiony modułem MPU6050 na S1.
 - Czujnik VL53L4CD wymagał dolutowania R4 i poprawienia zasilania C1/C2.
 
