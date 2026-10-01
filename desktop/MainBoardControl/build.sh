@@ -11,6 +11,8 @@ rm -rf -- "$app_dir"
 mkdir -p -- "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp -- "$source_dir/Info.plist" "$app_dir/Contents/Info.plist"
 cp -- "$source_dir/aura_network_bridge.py" "$app_dir/Contents/Resources/aura_network_bridge.py"
+# Firmware tab: the repository this app was built from.
+printf '%s\n' "$project_dir" > "$app_dir/Contents/Resources/project_path.txt"
 
 xcrun swift "$source_dir/generate_icon.swift" "$icon_source"
 rm -rf -- "$iconset"
@@ -39,7 +41,7 @@ xcrun swiftc -parse-as-library -O \
     "${planner_objects[@]}" \
     -framework SwiftUI -framework AppKit -framework Foundation -framework SceneKit \
     -framework Network -framework Charts \
-    "$source_dir/MainBoardControl.swift" "$source_dir/AuraConnection.swift" "$source_dir/RobotControl.swift" "$source_dir/RobotTelemetry.swift" "$source_dir/QuadrupedView.swift" "$source_dir/CalibrationView.swift" "$source_dir/IMUAttitudePreview.swift" \
+    "$source_dir/MainBoardControl.swift" "$source_dir/AuraConnection.swift" "$source_dir/RobotControl.swift" "$source_dir/RobotTelemetry.swift" "$source_dir/QuadrupedView.swift" "$source_dir/CalibrationView.swift" "$source_dir/IMUAttitudePreview.swift" "$source_dir/FirmwareView.swift" \
     -o "$app_dir/Contents/MacOS/MainBoardControl"
 
 codesign --force --deep --sign - "$app_dir"

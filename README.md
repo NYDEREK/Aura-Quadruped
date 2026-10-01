@@ -15,6 +15,8 @@ Czworonożny robot na 12 serwach Waveshare **ST3215** (TTL, 1 Mbit/s), sterowany
 | `docs/history.md`, `docs/kinematics-review.md`, `docs/references.md` | Historia ustaleń sprzętowych, przegląd kinematyki, literatura (Cheetah 3 i in.) |
 | `diagnostics/` | Izolowane programy testowe (ICM‑42688, DualSense) |
 
+Wgrywanie firmware: zakładka **Firmware** w aplikacji Aura (opcjonalnie `git pull`, kopia NVS, build, flash bez kasowania ustawień) albo `tools/flash_firmware.sh [--pull]` w terminalu.
+
 Konfiguracja Wi‑Fi: skopiuj `main/wifi_credentials.example.h` do `main/wifi_credentials.h` (plik jest ignorowany przez git).
 
 ---

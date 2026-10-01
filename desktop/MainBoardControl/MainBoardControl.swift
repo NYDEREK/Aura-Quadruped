@@ -852,7 +852,7 @@ struct DualSenseView: View {
 }
 
 private enum AuraTab: String, CaseIterable, Identifiable {
-    case dashboard, imu, servos, robot, calibration, quadruped, ikLab, dualSense, sensors, leds
+    case dashboard, imu, servos, robot, calibration, quadruped, ikLab, dualSense, sensors, leds, firmware
 
     var id: Self { self }
     var title: String {
@@ -867,6 +867,7 @@ private enum AuraTab: String, CaseIterable, Identifiable {
         case .dualSense: "DualSense"
         case .sensors: "Czujniki"
         case .leds: "LED"
+        case .firmware: "Firmware"
         }
     }
     var icon: String {
@@ -881,6 +882,7 @@ private enum AuraTab: String, CaseIterable, Identifiable {
         case .dualSense: "gamecontroller"
         case .sensors: "ruler"
         case .leds: "lightbulb.led"
+        case .firmware: "arrow.down.circle"
         }
     }
 }
@@ -930,6 +932,7 @@ struct ContentView: View {
         case .dualSense: DualSenseView()
         case .sensors: ToFView()
         case .leds: LEDsView()
+        case .firmware: FirmwareView()
         }
     }
 
