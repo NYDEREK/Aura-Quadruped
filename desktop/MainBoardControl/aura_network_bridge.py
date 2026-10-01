@@ -11,19 +11,48 @@ import socket
 import sys
 import time
 
-BOARD_HOST = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.69"
+import os
+
+# argv: <host> <board port> <local port> [fallback address]
+# <host> is normally the mDNS name aura-main-board.local, so a new router or
+# DHCP lease never strands the app on an old hard-coded address. The last
+# address that answered is cached and tried next; argv[4] is a last resort.
+BOARD_HOST = sys.argv[1] if len(sys.argv) > 1 else "aura-main-board.local"
 BOARD_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 4242
 LOCAL_PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 4243
+FALLBACK_HOST = sys.argv[4] if len(sys.argv) > 4 else None
+CACHE = os.path.expanduser("~/Library/Application Support/Aura/board_address")
+
+
+def cached_address():
+    try:
+        with open(CACHE) as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
+
+
+def remember(address):
+    try:
+        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+        with open(CACHE, "w") as handle:
+            handle.write(address)
+    except OSError:
+        pass
 
 
 def connect_board():
     while True:
-        try:
-            link = socket.create_connection((BOARD_HOST, BOARD_PORT), timeout=3)
-            link.setblocking(False)
-            return link
-        except OSError:
-            time.sleep(1)
+        candidates = [BOARD_HOST, cached_address(), FALLBACK_HOST]
+        for host in dict.fromkeys(h for h in candidates if h):
+            try:
+                link = socket.create_connection((host, BOARD_PORT), timeout=3)
+                remember(link.getpeername()[0])
+                link.setblocking(False)
+                return link
+            except OSError:
+                continue
+        time.sleep(1)
 
 
 def serve(client):

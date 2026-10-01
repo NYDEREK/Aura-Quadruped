@@ -31,6 +31,7 @@
 static void com_measure_command(void);
 static void com_save_command(void);
 static void com_show_command(void);
+static void com_set_command(const char *args);
 
 #define CONSOLE_UART UART_NUM_0
 #define LINE_SIZE 96
@@ -124,6 +125,7 @@ static void print_help(void)
            "  tof retry         - detect both VL53L4CD sensors again\n"
            "  com measure       - CoM from servo loads (armed, mode 0, standing still)\n"
            "  com save | com show - store (disarmed) / print the CoM offset\n"
+           "  com set <fwd> <left> - store a CoM offset in mm (disarmed)\n"
            "  ble retry         - restart radios; both require external VIN > 7.0 V\n"
            "Servo configuration is available through Wi-Fi.\n");
 }
@@ -159,6 +161,16 @@ static void com_save_command(void)
     uint16_t margin = 0; robot_gait_get_static_balance(NULL, NULL, &margin);
     const esp_err_t result = robot_gait_set_static_balance(com_measured_x, com_measured_z, margin);
     printf("CoM save %d / %d mm: %s%s\n", com_measured_x, com_measured_z, esp_err_to_name(result),
+           result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
+}
+
+static void com_set_command(const char *args)
+{
+    int x = 0, z = 0;
+    if (sscanf(args, "%d %d", &x, &z) != 2) { printf("usage: com set <forward_mm> <left_mm>\n"); return; }
+    uint16_t margin = 0; robot_gait_get_static_balance(NULL, NULL, &margin);
+    const esp_err_t result = robot_gait_set_static_balance((int16_t)x, (int16_t)z, margin);
+    printf("CoM set %d / %d mm: %s%s\n", x, z, esp_err_to_name(result),
            result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
 }
 
@@ -372,6 +384,7 @@ static void execute_command(char *line)
     else if (!strcmp(line, "com measure")) com_measure_command();
     else if (!strcmp(line, "com save")) com_save_command();
     else if (!strcmp(line, "com show")) com_show_command();
+    else if (!strncmp(line, "com set ", 8)) com_set_command(line + 8);
     else if (!strncmp(line, "servo ping ", 11)) servo_command(false, line + 11);
     else if (!strncmp(line, "servo read ", 11)) servo_command(true, line + 11);
     else if (!strcmp(line, "imu retry")) {

@@ -317,7 +317,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // temporarily lose their .local resolver even though Aura is reachable
     // on the same WLAN; this is the current DHCP address used only as a
     // bounded final fallback in that situation.
-    private static let lastKnownBoardAddress = "192.168.0.69"
+    private static let lastKnownBoardAddress = "192.168.55.11"
     private static let bridgePort: NWEndpoint.Port = 4243
     @Published var connectionText = "Szukam Aury w sieci Wi-Fi…"
     @Published var isConnected = false
@@ -428,7 +428,7 @@ final class AuraConnection: NSObject, ObservableObject {
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [script.path, Self.lastKnownBoardAddress, "4242", "\(Self.bridgePort.rawValue)"]
+        task.arguments = [script.path, "aura-main-board.local", "4242", "\(Self.bridgePort.rawValue)", Self.lastKnownBoardAddress]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do {
