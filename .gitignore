@@ -12,7 +12,7 @@ diagnostics/**/build/
 
 # Gazebo
 /gazebo/build/
-/tools/
+/tools/gazebo-runtime/
 
 # Inne
 .DS_Store
