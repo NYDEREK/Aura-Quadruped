@@ -479,17 +479,6 @@ esp_err_t robot_control_set_axis_target(robot_leg_t leg, robot_axis_type_t axis,
     return accepted ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
-esp_err_t robot_control_set_frame(const float radians[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT],
-                                  uint16_t speed_raw, uint8_t acceleration)
-{
-    if (!robot_mutex || !radians) return ESP_ERR_INVALID_ARG;
-    // Never stall the gait clock behind calibration or a bus operation.
-    if (xSemaphoreTake(robot_mutex,0)!=pdTRUE) return ESP_ERR_TIMEOUT;
-    const bool ok=robot_model_set_frame(&robot,radians,speed_raw,acceleration);
-    xSemaphoreGive(robot_mutex);
-    return ok ? ESP_OK : ESP_ERR_INVALID_STATE;
-}
-
 esp_err_t robot_control_arm(void)
 {
     if (!robot_mutex) return ESP_ERR_INVALID_STATE;
@@ -629,11 +618,10 @@ esp_err_t robot_control_read_axis(robot_leg_t leg, robot_axis_type_t axis)
     if (xSemaphoreTake(robot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
     robot_axis_state_t *state = &robot.axis[leg][axis];
     const uint8_t id = state->config.servo_id;
-    const bool realtime = armed;
     xSemaphoreGive(robot_mutex);
     if (id == ROBOT_SERVO_ID_UNASSIGNED) return ESP_ERR_NOT_FOUND;
     servo_status_t feedback;
-    const esp_err_t result = realtime ? servo_feedback_realtime(id, &feedback) : servo_feedback(id, &feedback);
+    const esp_err_t result = servo_feedback(id, &feedback);
     if (result != ESP_OK) return result;
     const uint16_t encoded_position = (uint16_t)feedback.data[0] |
                                       ((uint16_t)feedback.data[1] << 8);

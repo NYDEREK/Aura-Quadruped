@@ -51,12 +51,12 @@ void servo_bus_set_external_power_enabled(bool enabled)
     xSemaphoreGive(mutex);
 }
 
-static esp_err_t exchange_timed(const uint8_t *packet, size_t size, servo_status_t *status, bool realtime)
+static esp_err_t exchange(const uint8_t *packet, size_t size, servo_status_t *status)
 {
     if (!ready) return ESP_ERR_INVALID_STATE;
     if (size == 0 || packet[2] > 253 ||
         (packet[4] != 1 && packet[4] != 2 && packet[4] != 3)) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(mutex, realtime ? 0 : pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
     if (!external_power_enabled) {
         (void)gpio_set_level(BOARD_SERVO_DIR, 0);
         xSemaphoreGive(mutex);
@@ -65,14 +65,14 @@ static esp_err_t exchange_timed(const uint8_t *packet, size_t size, servo_status
     esp_err_t result = uart_flush_input(port);
     if (result == ESP_OK) result = gpio_set_level(BOARD_SERVO_DIR, 1);
     if (result == ESP_OK && uart_write_bytes(port, packet, size) != (int)size) result = ESP_FAIL;
-    if (result == ESP_OK) result = uart_wait_tx_done(port, pdMS_TO_TICKS(realtime ? 2 : 20));
+    if (result == ESP_OK) result = uart_wait_tx_done(port, pdMS_TO_TICKS(20));
     // Release the bus after the last stop bit, including all error paths.
     esp_err_t release = gpio_set_level(BOARD_SERVO_DIR, 0);
     if (result == ESP_OK) result = release;
     if (result == ESP_OK) {
         uint8_t received[128];
         size_t used = 0;
-        const int64_t deadline = esp_timer_get_time() + (realtime ? 5000 : 30000);
+        const int64_t deadline = esp_timer_get_time() + 30000;
         result = ESP_ERR_TIMEOUT;
         while (esp_timer_get_time() < deadline) {
             if (used == sizeof(received)) {
@@ -90,11 +90,6 @@ static esp_err_t exchange_timed(const uint8_t *packet, size_t size, servo_status
     }
     xSemaphoreGive(mutex);
     return result;
-}
-
-static esp_err_t exchange(const uint8_t *packet, size_t size, servo_status_t *status)
-{
-    return exchange_timed(packet,size,status,false);
 }
 
 static esp_err_t transmit_broadcast(const uint8_t *packet, size_t size)
@@ -133,17 +128,6 @@ esp_err_t servo_feedback(uint8_t id, servo_status_t *status)
     memset(status, 0, sizeof(*status));
     esp_err_t result = exchange(request, size, status);
     if (result == ESP_OK && status->data_size != 15) return ESP_ERR_INVALID_SIZE;
-    return result;
-}
-
-esp_err_t servo_feedback_realtime(uint8_t id, servo_status_t *status)
-{
-    if (!status) return ESP_ERR_INVALID_ARG;
-    uint8_t request[8];
-    const size_t size=servo_make_read(id,56,15,request);
-    memset(status,0,sizeof(*status));
-    const esp_err_t result=exchange_timed(request,size,status,true);
-    if (result==ESP_OK && status->data_size!=15) return ESP_ERR_INVALID_SIZE;
     return result;
 }
 

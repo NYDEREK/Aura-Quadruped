@@ -79,8 +79,3 @@ void robot_model_update_feedback(robot_axis_state_t *axis, const uint8_t data[15
 bool robot_model_is_complete(const robot_model_t *model);
 const char *robot_leg_name(robot_leg_t leg);
 const char *robot_axis_name(robot_axis_type_t axis);
-
-// Validate the complete frame before changing any target; ignores unmapped
-// axes while commissioning. Caller holds the model lock for this operation.
-bool robot_model_set_frame(robot_model_t *model, const float radians[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT],
-                           uint16_t speed_raw, uint8_t acceleration);

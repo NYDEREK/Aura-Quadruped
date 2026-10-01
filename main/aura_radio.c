@@ -141,8 +141,6 @@ static bool controller_running;
 static bool bluedroid_running;
 static bool create_was_pressed;
 static bool controller_was_available;
-static uint32_t pad_loss_disarms;
-uint32_t aura_radio_pad_loss_disarms(void) { return pad_loss_disarms; }
 static const uint16_t telemetry_handle = 1;
 static const uint16_t event_handle = 2;
 static uint8_t last_power[AURA_FRAME_SIZE];
@@ -163,10 +161,7 @@ static void process_create_arm_switch(void)
     if (!available) {
         if (controller_was_available && robot_control_is_armed()) {
             const esp_err_t result = robot_control_disarm();
-            ++pad_loss_disarms;
-            ESP_LOGW(TAG, "DualSense lost (state=%d fresh=%d); robot disarmed: %s (count=%lu)",
-                     controller.state, controller.has_input, esp_err_to_name(result),
-                     (unsigned long)pad_loss_disarms);
+            ESP_LOGW(TAG, "DualSense lost; robot disarmed: %s", esp_err_to_name(result));
         }
         create_was_pressed = false;
         controller_was_available = false;
@@ -499,8 +494,7 @@ static void make_robot_body_reference_frame(uint8_t frame[AURA_FRAME_SIZE])
     frame[15] = (uint8_t)gait.tripod_walk_excluded;
     frame[16] = gait.swing_balance_active ? 1 : 0;
     frame[17] = gait.constrained_leg_mask;
-    frame[18] = 2; // v2: runtime phase frequency in 0.02 Hz units
-    frame[19] = (uint8_t)((gait.effective_frequency_centi_hz + 1) / 2);
+    frame[18] = 1; // extended body-reference schema
 }
 
 static void make_servo_capacity_frame(uint8_t frame[AURA_FRAME_SIZE])

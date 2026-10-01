@@ -43,18 +43,6 @@ int main(void)
     assert(robot.axis[ROBOT_LEG_LEFT_FRONT][ROBOT_AXIS_HIP].measured_load_raw == -3);
     assert(robot.axis[ROBOT_LEG_LEFT_FRONT][ROBOT_AXIS_HIP].measured_current_raw == -9);
     assert(robot.axis[ROBOT_LEG_LEFT_FRONT][ROBOT_AXIS_HIP].present);
-    float frame[4][3]={{0}};
-    frame[0][1]=0.25f; frame[3][2]=NAN;
-    const robot_model_t before=robot;
-    assert(!robot_model_set_frame(&robot,frame,3400,254));
-    assert(memcmp(&robot,&before,sizeof(robot))==0); // even last-axis failure is atomic
-    frame[3][2]=0;
-    assert(robot_model_set_frame(&robot,frame,3400,254));
-    assert(fabsf(robot.axis[0][1].target_radians-0.25f)<1e-6f);
-    assert(robot.axis[0][1].config.center_tick==before.axis[0][1].config.center_tick);
-    assert(robot.axis[0][1].config.direction==before.axis[0][1].config.direction);
-    assert(robot.axis[0][1].config.minimum_cdeg==before.axis[0][1].config.minimum_cdeg);
-    assert(robot.axis[0][1].config.maximum_cdeg==before.axis[0][1].config.maximum_cdeg);
     puts("robot model tests passed");
     return 0;
 }

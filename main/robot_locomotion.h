@@ -48,11 +48,3 @@ robot_vec3_t robot_locomotion_swing_bezier(robot_vec3_t liftoff,
 // scheduled contacts remain. This is dynamic three-leg walking, not crawl.
 robot_locomotion_leg_phase_t robot_locomotion_tripod_phase(robot_leg_t leg,
     robot_leg_t excluded, float global_phase, const robot_locomotion_profile_t *profile);
-
-// One mode numbering for R1, telemetry, desktop and DualSense player LEDs.
-uint8_t robot_locomotion_next_mode(uint8_t mode);
-uint8_t robot_locomotion_player_leds(uint8_t mode);
-
-// MIT ConvexMPCLocomotion command low-pass, expressed with a time constant
-// instead of a sample-rate-dependent coefficient. Buttons are not filtered.
-float robot_locomotion_filter_command(float previous, float command, float dt);

@@ -45,7 +45,3 @@ esp_err_t servo_set_mode(uint8_t id, servo_mode_t mode);
 esp_err_t servo_motor_speed(uint8_t id, int16_t speed, uint8_t acceleration);
 esp_err_t servo_calibrate_center(uint8_t id);
 esp_err_t servo_assign_id(uint8_t current_id, uint8_t new_id);
-
-// Armed periodic polling: no mutex wait, 5 ms response budget. A missing
-// servo must not hold the shared TTL bus for a full 20 ms motion frame.
-esp_err_t servo_feedback_realtime(uint8_t id, servo_status_t *status);

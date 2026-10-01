@@ -101,9 +101,7 @@ typedef struct {
     float odometry_z_mm;
     float odometry_yaw_radians;
     uint32_t tick_count;
-    uint32_t planner_last_us, planner_max_us, planner_overruns, target_frame_drops;
     uint8_t phase_rate_percent;
-    uint16_t effective_frequency_centi_hz;
 } robot_gait_snapshot_t;
 
 esp_err_t robot_gait_init(void);
@@ -141,11 +139,6 @@ esp_err_t robot_gait_set_static_balance(int16_t com_forward_mm,
 // Extra lateral placement of each foot after the physical ab/ad link.  The
 // value is persisted only while disarmed and never writes a servo target.
 esp_err_t robot_gait_set_lateral_stance_mm(int16_t stance_mm);
-
-// UART commissioning helpers (no effect on motion).
-esp_err_t robot_gait_measure_com(int16_t *com_forward_mm, int16_t *com_left_mm);
-void robot_gait_get_static_balance(int16_t *com_forward_mm, int16_t *com_left_mm,
-                                   uint16_t *support_margin_mm);
 int16_t robot_gait_get_lateral_stance_mm(void);
 // Enables the measured-body-attitude loop for the next arm cycle. This is a
 // commissioning setting: it is persisted only while disarmed and never sends
@@ -165,5 +158,5 @@ esp_err_t robot_gait_clear_virtual_input(void);
 esp_err_t robot_gait_set_calibration_test(bool enabled, robot_leg_t leg);
 
 // Configuration only, accepted while disarmed. Create is still the only pad
-// arming action. R1 also reaches this mode as index 5 in its normal cycle.
+// arming action. Three-leg mode overrides R1 until disabled while disarmed.
 esp_err_t robot_gait_set_tripod_walk(bool enabled, robot_leg_t excluded);

@@ -9,7 +9,6 @@
 #include "driver/uart_vfs.h"
 #include "esp_err.h"
 #include "esp_system.h"
-#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,16 +22,9 @@
 #include "power.h"
 #include "robot_control.h"
 #include "robot_gait.h"
-#include "robot_locomotion.h"
 #include "servo_bus.h"
 #include "tof.h"
 #include "ws2812.h"
-
-static void com_measure_command(void);
-static void com_save_command(void);
-static void com_show_command(void);
-static void com_set_command(const char *args);
-static void gait_profile_command(const char *args);
 
 #define CONSOLE_UART UART_NUM_0
 #define LINE_SIZE 96
@@ -86,8 +78,10 @@ static void state_indicator_task(void *argument)
         (void)ws2812_write_rgb(strip, STATE_INDICATOR_PIXEL_COUNT);
         // Sony's centred patterns show 0...5 white dots independently of RGB.
         // Count = selected mode: stand, trot, crawl, run, climb, three-leg walk.
-        const uint8_t players = !safety_fault && !gait.calibration_test
-            ? robot_locomotion_player_leds(gait.selected_gait) : 0;
+        static const uint8_t gait_dots[] = {0x00, 0x04, 0x0a, 0x15, 0x1b, 0x1f};
+        const uint8_t players = !safety_fault && !gait.calibration_test &&
+                                (unsigned)gait.selected_gait < sizeof(gait_dots)
+            ? gait_dots[gait.selected_gait] : 0;
         dualsense_set_indicators(current.red, current.green, current.blue, players);
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -124,99 +118,12 @@ static void print_help(void)
            "  gait virtual off  - return gait input to the paired pad\n"
            "  gait virtual F [L T H] - virtual sticks, each -1000..1000\n"
            "  tof retry         - detect both VL53L4CD sensors again\n"
-           "  com measure       - CoM from servo loads (armed, mode 0, standing still)\n"
-           "  com save | com show - store (disarmed) / print the CoM offset\n"
-           "  com set <fwd> <left> - store a CoM offset in mm (disarmed)\n"
            "  ble retry         - restart radios; both require external VIN > 7.0 V\n"
            "Servo configuration is available through Wi-Fi.\n");
 }
 
-static bool com_measured;
-static int16_t com_measured_x, com_measured_z;
-
-// Averages 20 load-distribution samples over ~2 s while Aura stands still.
-static void com_measure_command(void)
-{
-    long sum_x = 0, sum_z = 0; int valid = 0; esp_err_t last = ESP_OK;
-    for (int i = 0; i < 20; ++i) {
-        int16_t x = 0, z = 0;
-        last = robot_gait_measure_com(&x, &z);
-        if (last == ESP_OK) { sum_x += x; sum_z += z; ++valid; }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    if (valid < 10) {
-        printf("CoM measure failed (%d/20 samples, last: %s). Arm, mode 0, sticks centred, all feet on the ground.\n",
-               valid, esp_err_to_name(last));
-        return;
-    }
-    com_measured_x = (int16_t)(sum_x / valid); com_measured_z = (int16_t)(sum_z / valid);
-    com_measured = true;
-    int16_t x = 0, z = 0; robot_gait_get_static_balance(&x, &z, NULL);
-    printf("CoM from servo loads: forward=%d mm left=%d mm (%d samples). Stored now: %d / %d mm.\n"
-           "Disarm, then 'com save' to store it.\n", com_measured_x, com_measured_z, valid, x, z);
-}
-
-static void com_save_command(void)
-{
-    if (!com_measured) { printf("Run 'com measure' first.\n"); return; }
-    uint16_t margin = 0; robot_gait_get_static_balance(NULL, NULL, &margin);
-    const esp_err_t result = robot_gait_set_static_balance(com_measured_x, com_measured_z, margin);
-    printf("CoM save %d / %d mm: %s%s\n", com_measured_x, com_measured_z, esp_err_to_name(result),
-           result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
-}
-
-static void com_set_command(const char *args)
-{
-    int x = 0, z = 0;
-    if (sscanf(args, "%d %d", &x, &z) != 2) { printf("usage: com set <forward_mm> <left_mm>\n"); return; }
-    uint16_t margin = 0; robot_gait_get_static_balance(NULL, NULL, &margin);
-    const esp_err_t result = robot_gait_set_static_balance((int16_t)x, (int16_t)z, margin);
-    printf("CoM set %d / %d mm: %s%s\n", x, z, esp_err_to_name(result),
-           result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
-}
-
-// gait profile <mode 1..5> <stride mm> <lift mm> <frequency cHz> <duty %>
-static void gait_profile_command(const char *args)
-{
-    int mode = 0, stride = 0, lift = 0, chz = 0, duty = 0;
-    if (sscanf(args, "%d %d %d %d %d", &mode, &stride, &lift, &chz, &duty) != 5) {
-        printf("usage: gait profile <mode> <stride_mm> <lift_mm> <freq_cHz> <duty_%%>\n"); return;
-    }
-    const robot_locomotion_profile_t profile = {
-        .stride_mm = (uint16_t)stride, .step_height_mm = (uint16_t)lift,
-        .frequency_centi_hz = (uint16_t)chz, .duty_percent = (uint8_t)duty};
-    const esp_err_t result = robot_gait_set_locomotion_profile((robot_gait_mode_t)mode, &profile);
-    printf("Gait %d profile %d mm / %d mm / %d cHz / %d %%: %s%s\n", mode, stride, lift, chz, duty,
-           esp_err_to_name(result), result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
-}
-
-static void com_show_command(void)
-{
-    int16_t x = 0, z = 0; uint16_t margin = 0;
-    robot_gait_get_static_balance(&x, &z, &margin);
-    printf("Stored CoM offset: forward=%d mm left=%d mm, support margin=%u mm\n", x, z, margin);
-}
-
-static const char *reset_reason_name(esp_reset_reason_t reason)
-{
-    switch (reason) {
-    case ESP_RST_POWERON: return "power-on";
-    case ESP_RST_SW: return "software";
-    case ESP_RST_PANIC: return "PANIC/crash";
-    case ESP_RST_INT_WDT: return "interrupt watchdog";
-    case ESP_RST_TASK_WDT: return "task watchdog";
-    case ESP_RST_WDT: return "other watchdog";
-    case ESP_RST_BROWNOUT: return "BROWNOUT (supply dip)";
-    case ESP_RST_EXT: return "external/EN pin";
-    default: return "other";
-    }
-}
-
 static void print_status(void)
 {
-    printf("System: uptime=%llu s reset=%s pad_loss_disarms=%lu\n",
-           (unsigned long long)(esp_timer_get_time() / 1000000), reset_reason_name(esp_reset_reason()),
-           (unsigned long)aura_radio_pad_loss_disarms());
     dualsense_snapshot_t controller;
     dualsense_get_snapshot(&controller);
     printf("DualSense: state=%d saved=%d reports=%lu\n", controller.state, controller.has_saved_controller, (unsigned long)controller.sample_count);
@@ -243,23 +150,6 @@ static void print_status(void)
            gait.phase_milli, gait.input_forward_milli, gait.input_lateral_milli,
            gait.input_turn_milli, gait.spin_mode, gait.jumping, gait.virtual_input,
            gait.phase_rate_percent, (unsigned long)gait.tick_count);
-    printf("Planner: last=%lu us max=%lu us overruns=%lu frame_drops=%lu (20 ms budget) frequency=%u cHz\n",
-           (unsigned long)gait.planner_last_us,(unsigned long)gait.planner_max_us,
-           (unsigned long)gait.planner_overruns,(unsigned long)gait.target_frame_drops,gait.effective_frequency_centi_hz);
-    {
-        // The diagonal (two-leg) support lasts one swing. With the LIPM time
-        // constant sqrt(h/g) ~ 0.15 s, anything above ~0.3 s cannot be held.
-        robot_locomotion_profile_t profile = {0};
-        if (gait.active_gait >= 1 && robot_gait_get_locomotion_profile(gait.active_gait, &profile) &&
-            gait.effective_frequency_centi_hz > 0) {
-            const float swing_ms = 1000.0f * (1.0f - profile.duty_percent / 100.0f) /
-                                   (gait.effective_frequency_centi_hz / 100.0f);
-            printf("Gait profile: %u mm / %u mm / %u cHz (effective %u) / %u %% -> swing (two-leg) %.0f ms%s\n",
-                   profile.stride_mm, profile.step_height_mm, profile.frequency_centi_hz,
-                   gait.effective_frequency_centi_hz, profile.duty_percent, swing_ms,
-                   swing_ms > 300.0f ? "  WARNING: too long to balance" : "");
-        }
-    }
     printf("Servo feedback: %u/%u live, %u moving, largest target error %.1f deg\n",
            feedback_axes, assigned_axes, moving_axes, maximum_tracking_error * 180.0f / 3.14159265f);
     aura_network_print_status();
@@ -410,11 +300,6 @@ static void execute_command(char *line)
     else if (!strcmp(line, "robot disarm"))
         printf("Robot disarm: %s\n", esp_err_to_name(robot_control_disarm()));
     else if (!strncmp(line, "gait virtual ", 13)) gait_virtual_command(line + 13);
-    else if (!strcmp(line, "com measure")) com_measure_command();
-    else if (!strcmp(line, "com save")) com_save_command();
-    else if (!strcmp(line, "com show")) com_show_command();
-    else if (!strncmp(line, "com set ", 8)) com_set_command(line + 8);
-    else if (!strncmp(line, "gait profile ", 13)) gait_profile_command(line + 13);
     else if (!strncmp(line, "servo ping ", 11)) servo_command(false, line + 11);
     else if (!strncmp(line, "servo read ", 11)) servo_command(true, line + 11);
     else if (!strcmp(line, "imu retry")) {
@@ -546,7 +431,6 @@ static void vin_radio_guard_task(void *argument)
 
 void app_main(void)
 {
-    printf("Aura boot: reset reason = %s\n", reset_reason_name(esp_reset_reason()));
     ESP_ERROR_CHECK(app_state_init());
 
     // Configure the fitted LED first. HIGH means on per the schematic.

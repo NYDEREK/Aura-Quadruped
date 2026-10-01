@@ -185,18 +185,3 @@ const char *robot_axis_name(robot_axis_type_t axis)
     static const char *const names[] = {"abduction", "hip", "knee"};
     return axis >= 0 && axis < ROBOT_AXIS_COUNT ? names[axis] : "?";
 }
-
-bool robot_model_set_frame(robot_model_t *model, const float radians[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT],
-                           uint16_t speed_raw, uint8_t acceleration)
-{
-    if (!model || !radians || speed_raw>3400) return false;
-    for (int leg=0;leg<ROBOT_LEG_COUNT;++leg) for (int axis=0;axis<ROBOT_AXIS_COUNT;++axis) {
-        const robot_axis_state_t *a=&model->axis[leg][axis];
-        if (!isfinite(radians[leg][axis]) || (a->config.servo_id!=ROBOT_SERVO_ID_UNASSIGNED &&
-            a->mode!=ROBOT_AXIS_POSITION)) return false;
-    }
-    for (int leg=0;leg<ROBOT_LEG_COUNT;++leg) for (int axis=0;axis<ROBOT_AXIS_COUNT;++axis)
-        if (model->axis[leg][axis].config.servo_id!=ROBOT_SERVO_ID_UNASSIGNED)
-            (void)robot_model_set_target(model,leg,axis,radians[leg][axis],speed_raw,acceleration);
-    return true;
-}

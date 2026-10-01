@@ -184,18 +184,3 @@ robot_locomotion_leg_phase_t robot_locomotion_tripod_phase(robot_leg_t leg,
         .scheduled_swing=swing, .support_contact=!swing, .local_phase=local,
         .swing_phase=swing ? (local-duty)/(1-duty) : 0};
 }
-
-uint8_t robot_locomotion_next_mode(uint8_t mode)
-{ return mode < GAIT_TRIPOD ? mode+1 : 0; }
-uint8_t robot_locomotion_player_leds(uint8_t mode)
-{
-    static const uint8_t masks[]={0,0x04,0x0a,0x15,0x1b,0x1f};
-    return mode <= GAIT_TRIPOD ? masks[mode] : 0;
-}
-
-float robot_locomotion_filter_command(float previous, float command, float dt)
-{
-    if (!isfinite(previous) || !isfinite(command) || !isfinite(dt) || dt<0) return 0;
-    // alpha = 0.1 at the ESP's 20 ms period (tau = -0.02/log(0.9)).
-    return previous + (-expm1f(-dt/0.18982443f))*(command-previous);
-}

@@ -25,7 +25,6 @@
 #include "robot_kinematics.h"
 #include "robot_odometry.h"
 #include "mpu6050.h"
-#include "robot_com_estimate.h"
 
 #define ROBOT_GAIT_PERIOD_MS 20
 #define ROBOT_GAIT_VIRTUAL_INPUT_TIMEOUT_US 300000
@@ -90,9 +89,20 @@
 // per-leg contact source.
 #define ROBOT_STATIC_CONTACT_TOUCHDOWN_START 0.84f
 #define ROBOT_STATIC_CONTACT_HOLD_EPSILON 0.00025f
+// Trot, run and climb have a two-foot phase.  A pair of contacts gives only
+// a support line, so this is deliberately a bounded feed-forward correction
+// towards that line, not a claim of static stability. IMU feedback will later
+// close the remaining pitch/roll loop.
+#define ROBOT_DYNAMIC_BALANCE_TROT_LIMIT_MM 24.0f
+#define ROBOT_DYNAMIC_BALANCE_RUN_LIMIT_MM 15.0f
+#define ROBOT_DYNAMIC_BALANCE_CLIMB_LIMIT_MM 28.0f
 // CoM lies slightly below the body-frame origin. This is the physical
 // battery/electronics plane used when IMU attitude is projected onto ground.
 #define ROBOT_BODY_COM_VERTICAL_OFFSET_MM (-25.0f)
+// A straight one-foot crawl uses the stronger three-foot static plan below.
+// This smaller bound covers its turn/spin path, where that static plan does
+// not apply but three or four feet remain planted.
+#define ROBOT_DYNAMIC_BALANCE_CRAWL_LIMIT_MM 18.0f
 #define ROBOT_ATTITUDE_MAX_ERROR_RAD (25.0f * ROBOT_PI / 180.0f)
 #define ROBOT_ATTITUDE_DEFAULT_MAX_CORRECTION_CDEG 2000
 #define ROBOT_ATTITUDE_MIN_MAX_CORRECTION_CDEG 300
@@ -161,7 +171,6 @@ static struct {
 } calibration_test;
 static bool r1_was_pressed, l1_was_pressed, cross_was_pressed, options_was_pressed;
 static float phase;
-static gait_input_t filtered_drive;
 static uint32_t jump_ticks_remaining;
 static joint_trajectory_t joint_trajectory[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
 static bool trajectory_initialized;
@@ -367,7 +376,7 @@ static float static_crawl_preload_fraction(void)
 
 static robot_gait_mode_t next_gait(robot_gait_mode_t gait)
 {
-    return (robot_gait_mode_t)robot_locomotion_next_mode((uint8_t)gait);
+    return gait == ROBOT_GAIT_CLIMB ? ROBOT_GAIT_STAND : (robot_gait_mode_t)(gait + 1);
 }
 
 static float leg_phase_offset(int leg, robot_gait_mode_t gait)
@@ -839,19 +848,29 @@ static robot_vec3_t foot_target_for_leg(robot_leg_t leg, float raw_phase, float 
                                          bool spin, bool turning, const gait_input_t *input,
                                          float stride)
 {
-    (void)turning; // No threshold/special arc formula in the continuous twist.
     (void)duty; // The authoritative profile is also consumed by the body plan.
     const robot_locomotion_profile_t *profile = gait_profile(state.active_gait);
     if (!active || jumping || !profile) return standing_foot_for_leg(leg);
     const robot_body_trajectory_request_t request = {
         .gait = (uint8_t)state.active_gait, .profile = *profile, .geometry = geometry,
         .lateral_stance_mm = lateral_stance_mm, .forward = input->forward,
-        .lateral = input->lateral, .turn = input->turn,
+        .lateral = input->lateral, .turn = turning || spin ? input->turn : 0,
         .stride_mm = stride, .stepping_in_place = stepping_in_place, .spin = spin,
         .excluded_leg = tripod_walk_excluded,
     };
     return robot_body_trajectory_foot(&request, leg,
         raw_phase - leg_phase_offset(leg, state.active_gait));
+}
+
+static float dynamic_balance_limit_mm(robot_gait_mode_t gait)
+{
+    switch (gait) {
+    case ROBOT_GAIT_CRAWL: return ROBOT_DYNAMIC_BALANCE_CRAWL_LIMIT_MM;
+    case ROBOT_GAIT_RUN: return ROBOT_DYNAMIC_BALANCE_RUN_LIMIT_MM;
+    case ROBOT_GAIT_CLIMB: return ROBOT_DYNAMIC_BALANCE_CLIMB_LIMIT_MM;
+    case ROBOT_GAIT_TROT: return ROBOT_DYNAMIC_BALANCE_TROT_LIMIT_MM;
+    default: return 0.0f;
+    }
 }
 
 static bool motion_tuning_valid(const robot_gait_motion_tuning_t *tuning)
@@ -892,6 +911,31 @@ static bool legacy_profile_defaults(const robot_locomotion_profile_t profiles[RO
            profiles[ROBOT_GAIT_CLIMB].duty_percent == 82;
 }
 
+// VPSP uses the scheduled full foot set, including projected touchdown
+// positions of swing legs. It gives one continuous CoM reference across a
+// contact change instead of jumping between instantaneous support lines.
+static bool dynamic_predictive_support_target(float global_phase,
+                                              bool stepping_in_place, bool spin,
+                                              bool turning, const gait_input_t *input,
+                                              float stride,
+                                              robot_planar_point_t *out_target)
+{
+    if (!input || !out_target) return false;
+    const float duty = gait_duty(state.active_gait);
+    robot_planar_point_t feet[ROBOT_LEG_COUNT] = {0};
+    float availability[ROBOT_LEG_COUNT] = {0};
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        const float local_phase = fmodf(global_phase +
+                                        leg_phase_offset(leg, state.active_gait), 1.0f);
+        const robot_vec3_t foot = foot_target_for_leg((robot_leg_t)leg, local_phase, duty,
+                                                       true, stepping_in_place, false,
+                                                       spin, turning, input, stride);
+        feet[leg] = (robot_planar_point_t){.x = foot.x, .z = foot.z};
+        availability[leg] = robot_predictive_support_availability(local_phase, duty);
+    }
+    return robot_predictive_support_target(feet, availability, out_target);
+}
+
 // VPSP supplies a gait-phase reference; the reduced body planner projects
 // it onto scheduled support and solves c'' = g/h (c - p) over the full cycle.
 // IK receives c(phase) minus the configured, rotated CoM offset. This is a
@@ -903,7 +947,6 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
                                              float stride,
                                              robot_planar_point_t projected_com, float body_height)
 {
-    (void)turning; // The common twist handles straight motion and turns.
     state.body_preview_active = false;
     if (!active || !input) return (robot_vec3_t){0};
 
@@ -912,13 +955,9 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
         .gait = (uint8_t)state.active_gait, .profile = *profile, .geometry = geometry,
         .com_height_mm = body_height + ROBOT_BODY_COM_VERTICAL_OFFSET_MM,
         .lateral_stance_mm = lateral_stance_mm, .forward = input->forward,
-        .lateral = input->lateral, .turn = input->turn,
+        .lateral = input->lateral, .turn = turning || spin ? input->turn : 0,
         .stride_mm = stride, .stepping_in_place = stepping_in_place, .spin = spin,
         .excluded_leg = tripod_walk_excluded,
-        .body_height_mm = body_height,
-        .com_offset_x_mm = projected_com.x, .com_offset_z_mm = projected_com.z,
-        .joint_velocity_limit = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
-        .joint_acceleration_limit = ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
     };
     // Unlike p_VPSP itself, this periodic CoM reference includes the
     // acceleration required to stay supported on the scheduled diagonal.
@@ -930,8 +969,24 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
         return (robot_vec3_t){.x = body.position_mm.x - projected_com.x,
                               .z = body.position_mm.z - projected_com.z};
     }
-    // The caller holds the last complete frame when no valid path exists.
-    return (robot_vec3_t){0};
+    // Profiles with flight have no constant-height LIPM solution. Preserve
+    // their old bounded reference, explicitly reported as preview inactive.
+    robot_planar_point_t p_vpsp = {0};
+    if (!dynamic_predictive_support_target(global_phase, stepping_in_place, spin, turning,
+                                           input, stride, &p_vpsp))
+        return (robot_vec3_t){0};
+
+    const float limit = dynamic_balance_limit_mm(state.active_gait);
+    const float magnitude = hypotf(p_vpsp.x, p_vpsp.z);
+    if (limit > 0.0f && magnitude > limit) {
+        const float scale = limit / magnitude;
+        p_vpsp.x *= scale;
+        p_vpsp.z *= scale;
+    }
+    return (robot_vec3_t){
+        .x = p_vpsp.x - projected_com.x,
+        .z = p_vpsp.z - projected_com.z,
+    };
 }
 
 static void dynamic_balance_step(robot_vec3_t desired, bool enabled)
@@ -1363,7 +1418,7 @@ static void calibration_test_tick(const gait_input_t *input)
 
 static void gait_tick(void)
 {
-    gait_input_t input = read_input();
+    const gait_input_t input = read_input();
     if (calibration_test.enabled) {
         state.body_preview_active = false;
         state.body_shift_x_mm = state.body_shift_z_mm = 0;
@@ -1372,21 +1427,8 @@ static void gait_tick(void)
         calibration_test_tick(&input);
         return;
     }
-    if (!input.connected || !input.has_input) {
-        filtered_drive = (gait_input_t){0};
-    } else {
-        filtered_drive.forward = robot_locomotion_filter_command(filtered_drive.forward,input.forward,0.02f);
-        filtered_drive.lateral = robot_locomotion_filter_command(filtered_drive.lateral,input.lateral,0.02f);
-        filtered_drive.turn = robot_locomotion_filter_command(filtered_drive.turn,input.turn,0.02f);
-        filtered_drive.height = robot_locomotion_filter_command(filtered_drive.height,input.height,0.02f);
-    }
-    input.forward=filtered_drive.forward; input.lateral=filtered_drive.lateral;
-    input.turn=filtered_drive.turn; input.height=filtered_drive.height;
-    if (input.r1 && !r1_was_pressed) {
-        state.selected_gait = next_gait(state.selected_gait);
-        tripod_walk_entry = 0;
-    }
-    tripod_walk_enabled = state.selected_gait == ROBOT_GAIT_TRIPOD;
+    if (tripod_walk_enabled) state.selected_gait = ROBOT_GAIT_TRIPOD;
+    else if (input.r1 && !r1_was_pressed) state.selected_gait = next_gait(state.selected_gait);
     if (input.l1 && !l1_was_pressed) state.spin_mode = !state.spin_mode;
     if (input.cross && !cross_was_pressed && !tripod_test_is_active() && !tripod_walk_enabled) jump_ticks_remaining = 33;
     r1_was_pressed = input.r1;
@@ -1486,28 +1528,13 @@ static void gait_tick(void)
     update_contact_observers(&feedback, armed, motion_active, use_static_crawl, jumping,
                              tripod_active);
 
-    float effective_frequency=gait_hz(state.active_gait);
-    bool timed_path_feasible=true;
-    const bool use_timed_path=motion_active && !use_static_crawl && !tripod_active && !jumping;
-    if (use_timed_path) {
-        // Solve the shared period BEFORE advancing phase. The twelve joint
-        // velocity/acceleration bounds apply to one clock, not twelve delayed
-        // stop-at-each-point trajectories. This computation stays on ESP.
-        (void)dynamic_balance_desired(phase,true,stepping_in_place,spin,turning,&input,stride,
-            projected_com_for_body_pose(attitude_control.active ? attitude_control.correction_roll_radians : 0,
-                                        attitude_control.active ? attitude_control.correction_pitch_radians : 0),
-            nominal_body_height_mm+input.height*ROBOT_BODY_HEIGHT_ADJUST_MM);
-        timed_path_feasible=body_trajectory.valid;
-        effective_frequency=timed_path_feasible ? body_trajectory.effective_frequency_hz : 0;
-    }
-    state.effective_frequency_centi_hz=(uint16_t)lroundf(effective_frequency*100);
     if (use_static_crawl) {
         static_crawl_advance_phase(phase_rate, &input, stride, reference_error, has_feedback,
                                    feedback_error);
     } else if (motion_active && (!tripod_walk_enabled || tripod_walk_entry >= 1.0f)) {
         // Dynamic gaits own a fixed 50 Hz clock. Servo feedback is not a
         // contact sensor and must not dilate a phase shared by torso and feet.
-        const float requested_advance = effective_frequency *
+        const float requested_advance = gait_hz(state.active_gait) *
                                        ((float)ROBOT_GAIT_PERIOD_MS / 1000.0f);
         // Trot and Run retain a deterministic 50 Hz phase clock.  The
         // addressed ST3215 feedback arrives asynchronously across twelve
@@ -1519,7 +1546,7 @@ static void gait_tick(void)
     state.contact_control_active = false;
     state.contact_touchdown_waiting = false;
 
-    if (tripod_walk_enabled && active && armed && timed_path_feasible) {
+    if (tripod_walk_enabled && active && armed) {
         if (tripod_walk_entry == 0) phase = 0;
         tripod_walk_entry = fminf(1, tripod_walk_entry + 0.02f / 1.2f);
     }
@@ -1592,10 +1619,6 @@ static void gait_tick(void)
     state.tripod_walk_enabled = tripod_walk_enabled;
     state.tripod_walk_excluded = tripod_walk_excluded;
     state.constrained_leg_mask = 0;
-    float frame[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
-    // A failed IK solve retains that leg's previous complete target.
-    for (int leg=0;leg<ROBOT_LEG_COUNT;++leg) for (int axis=0;axis<ROBOT_AXIS_COUNT;++axis)
-        frame[leg][axis]=feedback.axis[leg][axis].target_radians;
     for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
         robot_vec3_t target = body_pose_foot_target(world_feet[leg], body_height + jump_lift, body_pose);
         if (swing_balance && swing[leg]) {
@@ -1613,31 +1636,22 @@ static void gait_tick(void)
                 state.constrained_leg_mask |= 1U << leg;
         }
         for (int axis = 0; axis < ROBOT_AXIS_COUNT; ++axis) {
-            const robot_axis_config_t *config=&feedback.axis[leg][axis].config;
-            const float low=config->minimum_cdeg*ROBOT_PI/18000.0f;
-            const float high=config->maximum_cdeg*ROBOT_PI/18000.0f;
-            const float reference=clampf(state.target_cdeg[leg][axis]*ROBOT_PI/18000.0f,low,high);
-            const joint_trajectory_limits_t limits={ROBOT_JOINT_MAX_VELOCITY_RAD_S,
-                                                     ROBOT_JOINT_MAX_ACCELERATION_RAD_S2};
-            float command=reference;
-            if (armed) {
-                command = use_timed_path && timed_path_feasible
-                    ? joint_trajectory_track(&joint_trajectory[leg][axis],reference,0.02f,limits)
-                    : joint_trajectory_step(&joint_trajectory[leg][axis],reference,0.02f,limits);
-                if (command<low || command>high) {
-                    command=clampf(command,low,high);
-                    joint_trajectory_reset(&joint_trajectory[leg][axis],command);
-                }
-            }
-            frame[leg][axis]=command;
+            const float reference = (float)state.target_cdeg[leg][axis] * ROBOT_PI / 18000.0f;
+            const float command = armed
+                ? joint_trajectory_step(&joint_trajectory[leg][axis], reference,
+                                        (float)ROBOT_GAIT_PERIOD_MS / 1000.0f,
+                                        (joint_trajectory_limits_t){
+                                            .maximum_velocity = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
+                                            .maximum_acceleration = ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
+                                        })
+                : reference;
+            (void)robot_control_set_axis_target((robot_leg_t)leg, (robot_axis_type_t)axis,
+                                                 command, ROBOT_GAIT_SPEED_RAW,
+                                                 ROBOT_GAIT_ACCELERATION);
         }
     }
-    if (!timed_path_feasible) { state.constrained_leg_mask=0x0f; trajectory_initialized=false; }
-    else if (robot_control_set_frame(frame, ROBOT_GAIT_SPEED_RAW, ROBOT_GAIT_ACCELERATION)!=ESP_OK)
-        ++state.target_frame_drops;
     state.jumping = tripod_active ? false : jumping;
-    state.tracking_limited = (use_static_crawl || tripod_active) ? phase_rate < 0.995f
-        : use_timed_path && effective_frequency < gait_hz(state.active_gait)*0.995f;
+    state.tracking_limited = (use_static_crawl || tripod_active) && phase_rate < 0.995f;
     state.controller_connected = input.connected;
     state.controller_has_input = input.has_input;
     state.virtual_input = virtual_input.enabled;
@@ -1646,8 +1660,7 @@ static void gait_tick(void)
     state.input_lateral_milli = (int16_t)lroundf(input.lateral * 1000.0f);
     state.input_turn_milli = (int16_t)lroundf(input.turn * 1000.0f);
     state.body_height_mm = (int16_t)lroundf(body_height + jump_lift);
-    const float applied_phase_rate = (use_static_crawl || tripod_active) ? phase_rate
-        : use_timed_path ? effective_frequency / fmaxf(0.01f,gait_hz(state.active_gait)) : 1.0f;
+    const float applied_phase_rate = (use_static_crawl || tripod_active) ? phase_rate : 1.0f;
     state.phase_rate_percent = (uint8_t)lroundf(applied_phase_rate * 100.0f);
     update_odometry(&feedback, armed, motion_active, tripod_active ? false : jumping,
                     spin || turning,
@@ -1661,11 +1674,7 @@ static void gait_task_fn(void *unused)
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
         if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-            const int64_t start=esp_timer_get_time();
             gait_tick();
-            state.planner_last_us=(uint32_t)(esp_timer_get_time()-start);
-            if (state.planner_last_us>state.planner_max_us) state.planner_max_us=state.planner_last_us;
-            if (state.planner_last_us>ROBOT_GAIT_PERIOD_MS*1000) ++state.planner_overruns;
             xSemaphoreGive(gait_mutex);
         }
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS));
@@ -1781,7 +1790,6 @@ esp_err_t robot_gait_init(void)
             tripod_walk_enabled = (three_config & 0x80) != 0;
             tripod_walk_excluded = (robot_leg_t)(three_config & 3);
         }
-        if (tripod_walk_enabled) state.selected_gait = ROBOT_GAIT_TRIPOD;
         state.tripod_walk_enabled = tripod_walk_enabled;
         state.tripod_walk_excluded = tripod_walk_excluded;
         nvs_close(nvs);
@@ -2226,43 +2234,4 @@ esp_err_t robot_gait_set_tripod_walk(bool enabled, robot_leg_t excluded)
     }
     xSemaphoreGive(gait_mutex);
     return result;
-}
-
-void robot_gait_get_static_balance(int16_t *com_forward_mm, int16_t *com_left_mm,
-                                   uint16_t *support_margin_mm)
-{
-    if (com_forward_mm) *com_forward_mm = static_com_forward_mm;
-    if (com_left_mm) *com_left_mm = static_com_left_mm;
-    if (support_margin_mm) *support_margin_mm = static_support_margin_mm;
-}
-
-esp_err_t robot_gait_measure_com(int16_t *com_forward_mm, int16_t *com_left_mm)
-{
-    if (!com_forward_mm || !com_left_mm) return ESP_ERR_INVALID_ARG;
-    if (!robot_control_is_armed()) return ESP_ERR_INVALID_STATE;
-    robot_gait_snapshot_t gait = {0};
-    robot_gait_snapshot(&gait);
-    if (gait.active_gait != ROBOT_GAIT_STAND || gait.input_forward_milli || gait.input_lateral_milli ||
-        gait.input_turn_milli || gait.jumping) return ESP_ERR_INVALID_STATE;
-    robot_model_t model = {0};
-    robot_control_snapshot(&model);
-    const int64_t now = esp_timer_get_time();
-    robot_vec3_t feet[ROBOT_LEG_COUNT];
-    float weight[ROBOT_LEG_COUNT];
-    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
-        float q[ROBOT_AXIS_COUNT];
-        for (int axis = 0; axis < ROBOT_AXIS_COUNT; ++axis) {
-            const robot_axis_state_t *servo = &model.axis[leg][axis];
-            if (!servo->present || servo->feedback_time_us <= 0 ||
-                now - servo->feedback_time_us > 200000) return ESP_ERR_TIMEOUT;
-            q[axis] = servo->measured_radians;
-        }
-        feet[leg] = robot_kinematics_forward(&geometry, (robot_leg_t)leg, q, 0.0f);
-        weight[leg] = (float)model.axis[leg][ROBOT_AXIS_KNEE].measured_load_raw;
-    }
-    robot_planar_point_t com;
-    if (!robot_com_estimate(feet, weight, &com)) return ESP_ERR_INVALID_RESPONSE;
-    *com_forward_mm = (int16_t)lroundf(com.x);
-    *com_left_mm = (int16_t)lroundf(com.z);
-    return ESP_OK;
 }

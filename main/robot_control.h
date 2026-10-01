@@ -89,7 +89,3 @@ esp_err_t robot_control_calibration_set_leg_torque(robot_leg_t leg, bool enabled
 esp_err_t robot_control_calibration_set_leg_preview(robot_leg_t leg, bool enabled);
 esp_err_t robot_control_calibration_release_leg(robot_leg_t leg);
 void robot_control_snapshot(robot_model_t *model);
-
-// One coherent planner frame; servo output cannot observe half-updated legs.
-esp_err_t robot_control_set_frame(const float radians[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT],
-                                  uint16_t speed_raw, uint8_t acceleration);
