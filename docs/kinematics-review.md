@@ -59,3 +59,11 @@ Bez zmian w planie: fizycznie przy jednej nodze stale w górze każdy krok zosta
 3. **Offset CoM w NVS wynosił 0** (klucze `com_x_mm/com_z_mm` nigdy nie zapisane) — punkt 2 nic nie robi, dopóki CoM nie jest ustawiony. Nowe komendy UART:
    - `com measure` — robot uzbrojony, tryb 0, gałki puszczone: 20 próbek obciążenia kolan → CoM z równowagi momentów (`robot_com_estimate.c`),
    - `com save` — po rozbrojeniu zapisuje zmierzony CoM, `com show` — pokazuje zapisany.
+
+## Dlaczego Aura przewraca się na podniesioną łapę (tryb 3) — 1.10.2026
+
+Zapisany profil trybu 3 w NVS: 44 mm / 41 mm / **1,0 Hz / 52 %** → para po przekątnej stoi sama przez **0,48 s** w każdym kroku (96 % cyklu na dwóch nogach). Na linii dwóch stóp robot jest odwróconym wahadłem: błąd boczny rośnie jak cosh(t/τ), τ = √(h/g) ≈ 0,146 s przy h ≈ 210 mm. Po 0,48 s błąd 3 mm staje się 40 mm, korpus przechyla się o ~11°, a stopa w powietrzu po tej stronie opada o ~28 mm i szura. Żadna korekcja IMU nie zmieni tego w trakcie fazy dwunożnej: z punktowymi stopami na linii siła tarcia działa na osi podparcia i nie daje momentu (LIPM). Dlatego trzymanie robota z boku "naprawia" chód.
+
+Rozwiązanie fizyczne: faza dwunożna = czas jednego swingu musi być krótka, a resztę cyklu robot ma stać na 4 nogach. Serwa ST3215 (5,2 rad/s) pozwalają na swing ok. **0,22 s** (planer). Profil 40 mm / 30 mm / 1,5 Hz / 70 % daje: swing 0,22 s, dwa okresy podparcia na 4 nogach w cyklu, efektywnie ~1,35 Hz. Błąd 3 mm rośnie wtedy do ~7 mm, a capture point poprawia go przy następnym kroku.
+
+`status` przez UART pokazuje teraz czas fazy dwunożnej i ostrzega, gdy przekracza 300 ms; `gait profile <tryb> <krok> <wys> <cHz> <duty>` zapisuje profil bez aplikacji.

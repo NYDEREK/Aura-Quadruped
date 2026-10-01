@@ -32,6 +32,7 @@ static void com_measure_command(void);
 static void com_save_command(void);
 static void com_show_command(void);
 static void com_set_command(const char *args);
+static void gait_profile_command(const char *args);
 
 #define CONSOLE_UART UART_NUM_0
 #define LINE_SIZE 96
@@ -174,6 +175,21 @@ static void com_set_command(const char *args)
            result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
 }
 
+// gait profile <mode 1..5> <stride mm> <lift mm> <frequency cHz> <duty %>
+static void gait_profile_command(const char *args)
+{
+    int mode = 0, stride = 0, lift = 0, chz = 0, duty = 0;
+    if (sscanf(args, "%d %d %d %d %d", &mode, &stride, &lift, &chz, &duty) != 5) {
+        printf("usage: gait profile <mode> <stride_mm> <lift_mm> <freq_cHz> <duty_%%>\n"); return;
+    }
+    const robot_locomotion_profile_t profile = {
+        .stride_mm = (uint16_t)stride, .step_height_mm = (uint16_t)lift,
+        .frequency_centi_hz = (uint16_t)chz, .duty_percent = (uint8_t)duty};
+    const esp_err_t result = robot_gait_set_locomotion_profile((robot_gait_mode_t)mode, &profile);
+    printf("Gait %d profile %d mm / %d mm / %d cHz / %d %%: %s%s\n", mode, stride, lift, chz, duty,
+           esp_err_to_name(result), result == ESP_ERR_INVALID_STATE ? " (disarm first)" : "");
+}
+
 static void com_show_command(void)
 {
     int16_t x = 0, z = 0; uint16_t margin = 0;
@@ -231,6 +247,20 @@ static void print_status(void)
            (unsigned long)gait.planner_last_us,(unsigned long)gait.planner_max_us,
            (unsigned long)gait.planner_overruns,(unsigned long)gait.target_frame_drops,gait.effective_frequency_centi_hz);
     printf("Capture point: offset x=%d z=%d mm\n", gait.capture_offset_x_mm, gait.capture_offset_z_mm);
+    {
+        // The diagonal (two-leg) support lasts one swing. With the LIPM time
+        // constant sqrt(h/g) ~ 0.15 s, anything above ~0.3 s cannot be held.
+        robot_locomotion_profile_t profile = {0};
+        if (gait.active_gait >= 1 && robot_gait_get_locomotion_profile(gait.active_gait, &profile) &&
+            gait.effective_frequency_centi_hz > 0) {
+            const float swing_ms = 1000.0f * (1.0f - profile.duty_percent / 100.0f) /
+                                   (gait.effective_frequency_centi_hz / 100.0f);
+            printf("Gait profile: %u mm / %u mm / %u cHz (effective %u) / %u %% -> swing (two-leg) %.0f ms%s\n",
+                   profile.stride_mm, profile.step_height_mm, profile.frequency_centi_hz,
+                   gait.effective_frequency_centi_hz, profile.duty_percent, swing_ms,
+                   swing_ms > 300.0f ? "  WARNING: too long to balance" : "");
+        }
+    }
     printf("Servo feedback: %u/%u live, %u moving, largest target error %.1f deg\n",
            feedback_axes, assigned_axes, moving_axes, maximum_tracking_error * 180.0f / 3.14159265f);
     aura_network_print_status();
@@ -385,6 +415,7 @@ static void execute_command(char *line)
     else if (!strcmp(line, "com save")) com_save_command();
     else if (!strcmp(line, "com show")) com_show_command();
     else if (!strncmp(line, "com set ", 8)) com_set_command(line + 8);
+    else if (!strncmp(line, "gait profile ", 13)) gait_profile_command(line + 13);
     else if (!strncmp(line, "servo ping ", 11)) servo_command(false, line + 11);
     else if (!strncmp(line, "servo read ", 11)) servo_command(true, line + 11);
     else if (!strcmp(line, "imu retry")) {
