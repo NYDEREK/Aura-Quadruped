@@ -13,6 +13,6 @@ run() { /bin/bash -c 'source "$1" >/dev/null; shift; eval "$@"' bash "$ACT" "$@"
 echo "== backup of the current settings =="
 run '"$IDF_PYTHON_ENV_PATH/bin/python" -m esptool --chip esp32 -p '"$PORT"' -b 115200 read-flash 0x9000 0x6000 backups/nvs-before-restore-'"$STAMP"'.bin' || exit 3
 echo "== writing $IMAGE =="
-run '"$IDF_PYTHON_ENV_PATH/bin/python" -m esptool --chip esp32 -p '"$PORT"' -b 115200 write-flash 0x9000 '"$IMAGE"'' || exit 4
+run '"$IDF_PYTHON_ENV_PATH/bin/python" -m esptool --chip esp32 -p '"$PORT"' -b 115200 --after no-reset write-flash 0x9000 '"$IMAGE"'' || exit 4
 echo "== verify =="
 run '"$IDF_PYTHON_ENV_PATH/bin/python" -m esptool --chip esp32 -p '"$PORT"' -b 115200 verify-flash 0x9000 '"$IMAGE"'' && echo "== RESTORED =="
