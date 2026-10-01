@@ -67,3 +67,7 @@ Zapisany profil trybu 3 w NVS: 44 mm / 41 mm / **1,0 Hz / 52 %** → para po prz
 Rozwiązanie fizyczne: faza dwunożna = czas jednego swingu musi być krótka, a resztę cyklu robot ma stać na 4 nogach. Serwa ST3215 (5,2 rad/s) pozwalają na swing ok. **0,22 s** (planer). Profil 40 mm / 30 mm / 1,5 Hz / 70 % daje: swing 0,22 s, dwa okresy podparcia na 4 nogach w cyklu, efektywnie ~1,35 Hz. Błąd 3 mm rośnie wtedy do ~7 mm, a capture point poprawia go przy następnym kroku.
 
 `status` przez UART pokazuje teraz czas fazy dwunożnej i ostrzega, gdy przekracza 300 ms; `gait profile <tryb> <krok> <wys> <cHz> <duty>` zapisuje profil bez aplikacji.
+
+## Cofnięcie zmian ruchu — 1.10.2026
+
+Na życzenie: zachowanie chodu i balansu wraca do stanu z importu (e297086): `robot_gait.c`, `robot_gait.h`, `robot_locomotion.c` jak w oryginale (ACC 254, bez capture point, bez kwantyzacji, P-regulator postawy, bez przesuwania CoM w staniu). Zostają: poprawki radia (Wi‑Fi nie skanuje przy uzbrojonym robocie, backoff), aplikacja znajdująca Aurę przez mDNS, diagnostyka UART (`status`, `com measure/set/show`, `gait profile`). Profil trybu 3 przywrócony do 44/41/1,0 Hz/52 %. Moduły `robot_foot_placement`, `robot_com_estimate` (tylko UART) i `robot_balance_posture_pi` zostają w repo z testami, ale chód ich nie używa.

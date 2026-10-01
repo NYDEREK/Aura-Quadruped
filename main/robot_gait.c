@@ -25,20 +25,13 @@
 #include "robot_kinematics.h"
 #include "robot_odometry.h"
 #include "mpu6050.h"
-#include "robot_foot_placement.h"
 #include "robot_com_estimate.h"
 
 #define ROBOT_GAIT_PERIOD_MS 20
 #define ROBOT_GAIT_VIRTUAL_INPUT_TIMEOUT_US 300000
 #define ROBOT_PI 3.14159265358979323846f
 #define ROBOT_GAIT_SPEED_RAW 3400
-// Walking frames: ACC = 0 disables the ST3215's internal acceleration ramp
-// (Feetech SMS_STS default). The 50 Hz setpoint stream below is already
-// velocity/acceleration limited; a second ramp of 254 (= 39 rad/s²) inside
-// the servo halved every gait frequency and lengthened the two-leg phase.
-#define ROBOT_GAIT_ACCELERATION 0
-// Calibration / one-leg test keeps the former gentle servo ramp.
-#define ROBOT_CALIBRATION_ACCELERATION 254
+#define ROBOT_GAIT_ACCELERATION 254
 // Aura's calibrated links have ample clearance at this standing height. The
 // old 118 mm pose forced a deeply folded knee and made the usable gait stroke
 // unnecessarily small.
@@ -115,13 +108,6 @@
 #define ROBOT_ATTITUDE_MOVING_SLEW_RAD_S (35.0f * ROBOT_PI / 180.0f)
 #define ROBOT_ATTITUDE_MOVING_ACCEL_RAD_S2 (220.0f * ROBOT_PI / 180.0f)
 #define ROBOT_ATTITUDE_FRESH_US 120000
-// Integral gains of the posture PI loop (1/s). Standing: residual tilt decays
-// with ~0.25 s on top of the proportional response; walking is gentler so the
-// loop does not chase the periodic sway of the gait.
-#define ROBOT_ATTITUDE_STANDING_KI 4.0f
-#define ROBOT_ATTITUDE_MOVING_KI 1.5f
-// Standing CoM centring: time constant of the torso shift (s).
-#define ROBOT_STAND_COM_TIME_S 0.30f
 #define ROBOT_MOTION_TUNING_DEFAULT_ATTITUDE_GAIN_PER_MILLE 450U
 #define ROBOT_MOTION_TUNING_MIN_ATTITUDE_GAIN_PER_MILLE 100U
 #define ROBOT_MOTION_TUNING_MAX_ATTITUDE_GAIN_PER_MILLE 1000U
@@ -143,12 +129,8 @@
 // 100-tick/s² units for this profile.
 #define ROBOT_JOINT_MAX_VELOCITY_RAD_S \
     (2.0f * ROBOT_PI * (float)ROBOT_GAIT_SPEED_RAW / 4095.0f)
-// Gentle limit for arming, standing and calibration (the former value).
-#define ROBOT_JOINT_SAFE_ACCELERATION_RAD_S2 \
-    (2.0f * ROBOT_PI * (float)ROBOT_CALIBRATION_ACCELERATION * 100.0f / 4095.0f)
-// Walking path limit: time-scales the planned gait and bounds the tracked
-// setpoint. Conservative for an unloaded ST3215 (~0.22 s/60° at 12 V).
-#define ROBOT_JOINT_MAX_ACCELERATION_RAD_S2 120.0f
+#define ROBOT_JOINT_MAX_ACCELERATION_RAD_S2 \
+    (2.0f * ROBOT_PI * (float)ROBOT_GAIT_ACCELERATION * 100.0f / 4095.0f)
 
 typedef struct {
     bool connected;
@@ -227,7 +209,6 @@ static robot_vec3_t static_crawl_to_body_shift;
 // `dynamic_balance_shift` is the VPSP position target for this phase, not a
 // separate balance controller.
 static robot_vec3_t dynamic_balance_shift;
-static robot_vec3_t stand_com_shift;
 static robot_body_trajectory_t body_trajectory;
 static float tripod_body_height_mm;
 static struct {
@@ -243,8 +224,6 @@ static struct {
     float reference_pitch_radians;
     float correction_roll_radians;
     float correction_pitch_radians;
-    float integral_roll_radians;
-    float integral_pitch_radians;
 } attitude_control = {
     .enabled = true,
 };
@@ -252,10 +231,6 @@ static struct {
 // joint command. A rate limiter alone changes velocity instantaneously when
 // IMU error changes, which appears as a kick at the foot during a gait.
 static joint_trajectory_t attitude_trajectory[2];
-// Cheetah 3 eq. (6) capture-point term for swinging feet (see robot_foot_placement.h).
-static robot_foot_placement_t foot_placement;
-static uint32_t body_plan_rebuild_tick;
-#define ROBOT_BODY_PLAN_MIN_REBUILD_TICKS 5u
 static robot_contact_estimate_t contact_observer[ROBOT_LEG_COUNT];
 
 typedef enum {
@@ -941,40 +916,19 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
         .stride_mm = stride, .stepping_in_place = stepping_in_place, .spin = spin,
         .excluded_leg = tripod_walk_excluded,
         .body_height_mm = body_height,
-        // Rounded: the attitude loop moves this offset every tick; 1 mm is
-        // below servo resolution at the foot and keeps the plan cached.
-        .com_offset_x_mm = roundf(projected_com.x), .com_offset_z_mm = roundf(projected_com.z),
+        .com_offset_x_mm = projected_com.x, .com_offset_z_mm = projected_com.z,
         .joint_velocity_limit = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
         .joint_acceleration_limit = ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
     };
     // Unlike p_VPSP itself, this periodic CoM reference includes the
     // acceleration required to stay supported on the scheduled diagonal.
     // Feet and torso are evaluated at the SAME phase; no causal body lag.
-    // A full rebuild (64 samples, IK path derivatives, time scaling) costs
-    // several milliseconds on the ESP32. While the stick moves it would run
-    // every 20 ms tick and starve the other tasks, so rebuild at most every
-    // ROBOT_BODY_PLAN_MIN_REBUILD_TICKS and keep the last valid plan between.
-    const bool plan_current = robot_body_trajectory_matches(&body_trajectory, &request);
-    const bool same_mode = body_trajectory.request.gait == request.gait &&
-        body_trajectory.request.stepping_in_place == request.stepping_in_place &&
-        body_trajectory.request.spin == request.spin &&
-        body_trajectory.request.excluded_leg == request.excluded_leg;
-    const bool rebuild_allowed = !body_trajectory.valid || !same_mode ||
-        (uint32_t)(state.tick_count - body_plan_rebuild_tick) >= ROBOT_BODY_PLAN_MIN_REBUILD_TICKS;
-    if (!plan_current && !rebuild_allowed) {
-        const robot_body_trajectory_sample_t body =
-            robot_body_trajectory_sample(&body_trajectory, global_phase);
-        state.body_preview_active = true;
-        return (robot_vec3_t){.x = body.position_mm.x - roundf(projected_com.x),
-                              .z = body.position_mm.z - roundf(projected_com.z)};
-    }
-    if (!plan_current) body_plan_rebuild_tick = state.tick_count;
     if (robot_body_trajectory_build(&body_trajectory, &request)) {
         const robot_body_trajectory_sample_t body =
             robot_body_trajectory_sample(&body_trajectory, global_phase);
         state.body_preview_active = true;
-        return (robot_vec3_t){.x = body.position_mm.x - roundf(projected_com.x),
-                              .z = body.position_mm.z - roundf(projected_com.z)};
+        return (robot_vec3_t){.x = body.position_mm.x - projected_com.x,
+                              .z = body.position_mm.z - projected_com.z};
     }
     // The caller holds the last complete frame when no valid path exists.
     return (robot_vec3_t){0};
@@ -1028,8 +982,6 @@ static void update_attitude_reference_capture(bool armed, bool operator_idle,
     attitude_control.reference_settled_ticks = 0;
     attitude_control.correction_roll_radians = 0.0f;
     attitude_control.correction_pitch_radians = 0.0f;
-    attitude_control.integral_roll_radians = 0.0f;
-    attitude_control.integral_pitch_radians = 0.0f;
     joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
     joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     ESP_LOGI("robot_gait", "IMU attitude reference captured after neutral stance settled");
@@ -1061,8 +1013,6 @@ static void update_attitude_controller(bool armed, bool moving)
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
-        attitude_control.integral_roll_radians = 0.0f;
-        attitude_control.integral_pitch_radians = 0.0f;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     } else {
@@ -1082,14 +1032,10 @@ static void update_attitude_controller(bool armed, bool moving)
             // default for these position servos, not a gain copied from MIT's
             // torque controller. The known-good standing controller is intact.
             const float kd = moving ? 0.08f : 0.0f;
-            // PI: the integral removes the steady error a P-only loop leaves
-            // because the IMU measures its own correction (see robot_balance.h).
-            const float ki = moving ? ROBOT_ATTITUDE_MOVING_KI : ROBOT_ATTITUDE_STANDING_KI;
-            const float loop_dt = (float)ROBOT_GAIT_PERIOD_MS / 1000.0f;
-            const float desired_roll = robot_balance_posture_pi(&attitude_control.integral_roll_radians,
-                roll_error, measured.roll_rate_rad_s, proportional_gain, ki, kd, correction_limit, loop_dt);
-            const float desired_pitch = robot_balance_posture_pi(&attitude_control.integral_pitch_radians,
-                pitch_error, measured.pitch_rate_rad_s, proportional_gain, ki, kd, correction_limit, loop_dt);
+            const float desired_roll = robot_balance_posture_target(roll_error,
+                measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
+            const float desired_pitch = robot_balance_posture_target(pitch_error,
+                measured.pitch_rate_rad_s, proportional_gain, kd, correction_limit);
             const joint_trajectory_limits_t posture_limits = {
                 .maximum_velocity = moving ? ROBOT_ATTITUDE_MOVING_SLEW_RAD_S
                                             : ROBOT_ATTITUDE_STANDING_SLEW_RAD_S,
@@ -1394,13 +1340,13 @@ static void calibration_test_tick(const gait_input_t *input)
                                                      (float)ROBOT_GAIT_PERIOD_MS / 1000.0f,
                                                      (joint_trajectory_limits_t){
                                                          .maximum_velocity = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
-                                                         .maximum_acceleration = ROBOT_JOINT_SAFE_ACCELERATION_RAD_S2,
+                                                         .maximum_acceleration = ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
                                                      });
         command_cdeg[axis] = (int16_t)lroundf(command * 18000.0f / ROBOT_PI);
     }
     (void)robot_control_calibration_drive_leg_profile(calibration_test.leg, command_cdeg,
                                                       ROBOT_GAIT_SPEED_RAW,
-                                                      ROBOT_CALIBRATION_ACCELERATION);
+                                                      ROBOT_GAIT_ACCELERATION);
 
     state.controller_connected = input->connected;
     state.controller_has_input = input->has_input;
@@ -1434,14 +1380,8 @@ static void gait_tick(void)
         filtered_drive.turn = robot_locomotion_filter_command(filtered_drive.turn,input.turn,0.02f);
         filtered_drive.height = robot_locomotion_filter_command(filtered_drive.height,input.height,0.02f);
     }
-    // Quantise the filtered command to 2% steps. The periodic body plan is
-    // cached on its request; a continuously drifting low-pass output used
-    // to force a full rebuild (64 samples x IK x time scaling) every 20 ms
-    // and made the effective gait frequency jitter.
-    input.forward=roundf(filtered_drive.forward*50.0f)/50.0f;
-    input.lateral=roundf(filtered_drive.lateral*50.0f)/50.0f;
-    input.turn=roundf(filtered_drive.turn*50.0f)/50.0f;
-    input.height=roundf(filtered_drive.height*50.0f)/50.0f;
+    input.forward=filtered_drive.forward; input.lateral=filtered_drive.lateral;
+    input.turn=filtered_drive.turn; input.height=filtered_drive.height;
     if (input.r1 && !r1_was_pressed) {
         state.selected_gait = next_gait(state.selected_gait);
         tripod_walk_entry = 0;
@@ -1618,23 +1558,6 @@ static void gait_tick(void)
         const float transfer = smootherstep(fminf(1, tripod_walk_entry * 2));
         planned_body_shift.x *= transfer; planned_body_shift.z *= transfer;
     }
-    // Standing: put the calibrated CoM (rotated by the current posture
-    // correction) over the centre of the four-foot support polygon. Before
-    // this the torso stayed geometrically centred while standing, so a CoM
-    // offset (rear battery) was only compensated once a gait started.
-    // Walking plans already subtract the same offset, so the hand-over is
-    // continuous: the filter state follows the walking shift while moving.
-    const bool standing_balance = armed && trajectory_initialized && !motion_active &&
-        !tripod_active && !use_static_crawl && !jumping && !tripod_walk_enabled;
-    if (standing_balance) {
-        const float a = -expm1f(-((float)ROBOT_GAIT_PERIOD_MS / 1000.0f) / ROBOT_STAND_COM_TIME_S);
-        stand_com_shift.x += a * (-projected_com.x - stand_com_shift.x);
-        stand_com_shift.z += a * (-projected_com.z - stand_com_shift.z);
-        planned_body_shift.x += stand_com_shift.x;
-        planned_body_shift.z += stand_com_shift.z;
-    } else {
-        stand_com_shift = armed ? planned_body_shift : (robot_vec3_t){0};
-    }
     state.body_shift_x_mm = planned_body_shift.x;
     state.body_shift_z_mm = planned_body_shift.z;
     const robot_body_pose_t body_pose = {
@@ -1657,47 +1580,6 @@ static void gait_tick(void)
             world_feet[leg].y *= smootherstep(fmaxf(0, tripod_walk_entry*2-1));
         swing[leg] = gait_leg_scheduled_swing((robot_leg_t)leg, motion_active, use_static_crawl);
 
-    }
-    // Cheetah 3 eq. (6): move swinging feet by sqrt(z0/g) * (v - v_des).
-    // v - v_des is the unplanned tipping of the torso seen by the gyro. It
-    // runs only with the IMU balance enabled and in the timed dynamic gaits.
-    const bool placement_active = armed && motion_active && !use_static_crawl && !tripod_active &&
-        !jumping && timed_path_feasible && attitude_control.enabled && state.attitude_valid &&
-        (!tripod_walk_enabled || tripod_walk_entry >= 1);
-    state.capture_offset_x_mm = state.capture_offset_z_mm = 0;
-    if (placement_active) {
-        const robot_foot_placement_config_t placement_config =
-            robot_foot_placement_default_config();
-        const float com_height = body_height + ROBOT_BODY_COM_VERTICAL_OFFSET_MM;
-        const robot_planar_point_t tipping = robot_foot_placement_tipping_velocity(
-            balance_imu.roll_rate_rad_s, balance_imu.pitch_rate_rad_s,
-            attitude_control.active ? attitude_trajectory[0].velocity : 0.0f,
-            attitude_control.active ? attitude_trajectory[1].velocity : 0.0f, com_height);
-        // Unplanned tilt = measured - captured level reference - commanded
-        // correction (the correction rotates the torso on purpose).
-        const robot_planar_point_t drift = attitude_control.reference_valid
-            ? robot_foot_placement_tipping_displacement(
-                wrap_radians(balance_imu.roll_radians - attitude_control.reference_roll_radians -
-                             (attitude_control.active ? attitude_control.correction_roll_radians : 0.0f)),
-                wrap_radians(balance_imu.pitch_radians - attitude_control.reference_pitch_radians -
-                             (attitude_control.active ? attitude_control.correction_pitch_radians : 0.0f)),
-                com_height)
-            : (robot_planar_point_t){0};
-        const robot_planar_point_t capture = robot_foot_placement_update(&foot_placement,
-            &placement_config, drift, tipping, com_height, (float)ROBOT_GAIT_PERIOD_MS / 1000.0f);
-        state.capture_offset_x_mm = (int16_t)lroundf(capture.x);
-        state.capture_offset_z_mm = (int16_t)lroundf(capture.z);
-        const robot_locomotion_profile_t *profile = gait_profile(state.active_gait);
-        for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
-            if (tripod_walk_enabled && leg == tripod_walk_excluded) continue;
-            const robot_locomotion_leg_phase_t leg_state = tripod_walk_enabled
-                ? robot_locomotion_tripod_phase((robot_leg_t)leg, tripod_walk_excluded, phase, profile)
-                : robot_locomotion_leg_phase((uint8_t)state.active_gait, (robot_leg_t)leg, phase, profile);
-            world_feet[leg] = robot_foot_placement_apply(&foot_placement, (robot_leg_t)leg,
-                world_feet[leg], leg_state.scheduled_swing, leg_state.swing_phase, capture);
-        }
-    } else {
-        robot_foot_placement_reset(&foot_placement);
     }
     const robot_balance_pose_t commanded_pose = {
         .position={body_pose.x_mm, body_height+jump_lift, body_pose.z_mm},
@@ -1735,15 +1617,13 @@ static void gait_tick(void)
             const float low=config->minimum_cdeg*ROBOT_PI/18000.0f;
             const float high=config->maximum_cdeg*ROBOT_PI/18000.0f;
             const float reference=clampf(state.target_cdeg[leg][axis]*ROBOT_PI/18000.0f,low,high);
-            const joint_trajectory_limits_t walking_limits={ROBOT_JOINT_MAX_VELOCITY_RAD_S,
+            const joint_trajectory_limits_t limits={ROBOT_JOINT_MAX_VELOCITY_RAD_S,
                                                      ROBOT_JOINT_MAX_ACCELERATION_RAD_S2};
-            const joint_trajectory_limits_t gentle_limits={ROBOT_JOINT_MAX_VELOCITY_RAD_S,
-                                                     ROBOT_JOINT_SAFE_ACCELERATION_RAD_S2};
             float command=reference;
             if (armed) {
                 command = use_timed_path && timed_path_feasible
-                    ? joint_trajectory_track(&joint_trajectory[leg][axis],reference,0.02f,walking_limits)
-                    : joint_trajectory_step(&joint_trajectory[leg][axis],reference,0.02f,gentle_limits);
+                    ? joint_trajectory_track(&joint_trajectory[leg][axis],reference,0.02f,limits)
+                    : joint_trajectory_step(&joint_trajectory[leg][axis],reference,0.02f,limits);
                 if (command<low || command>high) {
                     command=clampf(command,low,high);
                     joint_trajectory_reset(&joint_trajectory[leg][axis],command);
@@ -2004,8 +1884,6 @@ esp_err_t robot_gait_arm(void)
         attitude_control.reference_settled_ticks = 0;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
-        attitude_control.integral_roll_radians = 0.0f;
-        attitude_control.integral_pitch_radians = 0.0f;
         attitude_control.active = false;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
@@ -2239,8 +2117,6 @@ esp_err_t robot_gait_set_attitude_balance_enabled(bool enabled)
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
-        attitude_control.integral_roll_radians = 0.0f;
-        attitude_control.integral_pitch_radians = 0.0f;
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     }
@@ -2366,7 +2242,6 @@ esp_err_t robot_gait_measure_com(int16_t *com_forward_mm, int16_t *com_left_mm)
     if (!robot_control_is_armed()) return ESP_ERR_INVALID_STATE;
     robot_gait_snapshot_t gait = {0};
     robot_gait_snapshot(&gait);
-    // Only a still, four-foot stance satisfies the static moment balance.
     if (gait.active_gait != ROBOT_GAIT_STAND || gait.input_forward_milli || gait.input_lateral_milli ||
         gait.input_turn_milli || gait.jumping) return ESP_ERR_INVALID_STATE;
     robot_model_t model = {0};

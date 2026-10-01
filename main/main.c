@@ -246,7 +246,6 @@ static void print_status(void)
     printf("Planner: last=%lu us max=%lu us overruns=%lu frame_drops=%lu (20 ms budget) frequency=%u cHz\n",
            (unsigned long)gait.planner_last_us,(unsigned long)gait.planner_max_us,
            (unsigned long)gait.planner_overruns,(unsigned long)gait.target_frame_drops,gait.effective_frequency_centi_hz);
-    printf("Capture point: offset x=%d z=%d mm\n", gait.capture_offset_x_mm, gait.capture_offset_z_mm);
     {
         // The diagonal (two-leg) support lasts one swing. With the LIPM time
         // constant sqrt(h/g) ~ 0.15 s, anything above ~0.3 s cannot be held.
