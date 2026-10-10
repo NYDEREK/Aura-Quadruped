@@ -23,7 +23,7 @@ typedef enum {
     ROBOT_MODE_BALANCE = 1,  // stands; the IMU loop keeps the torso level
     ROBOT_MODE_POSE = 2,     // stands; the left stick tilts the torso
     ROBOT_MODE_WALK = 3,     // diagonal gait with the saved Run profile
-    ROBOT_MODE_STAND_4 = 4,  // reserved, stands
+    ROBOT_MODE_TROT = 4,     // balanced trot under test (docs/balans-chodu.md)
     ROBOT_MODE_STAND_5 = 5,  // reserved, stands
 } robot_mode_t;
 
@@ -78,6 +78,12 @@ typedef struct {
     robot_leg_t tripod_walk_excluded;
     float body_shift_x_mm;
     float body_shift_z_mm;
+    // Mode 4 balance: live capture offset, mean offset of the planted feet
+    // and the learned CoM offset, ground frame (X forward, Z left), mm.
+    bool trot_walking;
+    float trot_capture_x_mm, trot_capture_z_mm;
+    float trot_support_x_mm, trot_support_z_mm;
+    float trot_learned_com_x_mm, trot_learned_com_z_mm;
     int16_t target_cdeg[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
     int16_t input_forward_milli;
     int16_t input_lateral_milli;

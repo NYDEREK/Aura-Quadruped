@@ -24,6 +24,7 @@
 #include "robot_contact.h"
 #include "robot_kinematics.h"
 #include "robot_odometry.h"
+#include "robot_walk_balance.h"
 #include "mpu6050.h"
 
 #define ROBOT_GAIT_PERIOD_MS 20
@@ -48,6 +49,25 @@
 #define ROBOT_POSE_MAX_PITCH_RAD (15.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_SLEW_RAD_S (40.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_ACCEL_RAD_S2 (200.0f * ROBOT_PI / 180.0f)
+// Pad mode 4: balanced trot (docs/balans-chodu.md). 0.20 s on two feet per
+// step, short enough for foot placement to catch the fall (a LIPM time
+// constant is ~0.15 s). The saved Trot profile stays in NVS but is not used.
+#define ROBOT_TROT_STRIDE_MM 40
+#define ROBOT_TROT_LIFT_MM 30
+#define ROBOT_TROT_FREQUENCY_CENTI_HZ 150
+#define ROBOT_TROT_DUTY_PERCENT 70
+// A 0.2 s swing needs ~130 rad/s^2 at the joints. ST3215 ACC 254 caps the
+// servo at 39 rad/s^2, so mode 4 sends ACC 0 (the factory "no ramp") and the
+// planner shapes the motion instead.
+#define ROBOT_TROT_SERVO_ACCELERATION 0
+#define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 120.0f
+#define ROBOT_TROT_COMMAND_TIME_S 0.25f
+#define ROBOT_TROT_STOP_COMMAND 0.05f
+#define ROBOT_TROT_COM_LEARN_RATE 0.05f
+#define ROBOT_TROT_COM_LEARN_LIMIT_MM 30.0f
+#define ROBOT_TROT_OFFSET_DECAY_S 1.0f
+#define ROBOT_BODY_SHIFT_RATE_MM_S 150.0f
+#define ROBOT_BODY_SHIFT_ACCEL_MM_S2 1500.0f
 // DualSense hat switch, low nibble of buttons[0]; diagonals are ignored.
 #define DPAD_UP 0
 #define DPAD_RIGHT 2
@@ -190,6 +210,16 @@ static uint8_t dpad_was = DPAD_NONE;
 static int16_t height_offset_mm;
 static joint_trajectory_t height_trajectory;
 static joint_trajectory_t pose_trajectory[2];
+static const robot_locomotion_profile_t trot_profile = {
+    .stride_mm = ROBOT_TROT_STRIDE_MM, .step_height_mm = ROBOT_TROT_LIFT_MM,
+    .frequency_centi_hz = ROBOT_TROT_FREQUENCY_CENTI_HZ, .duty_percent = ROBOT_TROT_DUTY_PERCENT,
+};
+static robot_walk_balance_t trot_balance;
+static robot_planar_point_t trot_learned_com;
+static float trot_command[3];        // low-passed forward, lateral, turn
+static bool trot_walking;
+static bool trot_was_swing[ROBOT_LEG_COUNT];
+static joint_trajectory_t body_shift_trajectory[2];
 static float phase;
 static uint32_t jump_ticks_remaining;
 static joint_trajectory_t joint_trajectory[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
@@ -369,6 +399,8 @@ static gait_input_t read_input(void)
 static const robot_locomotion_profile_t *gait_profile(robot_gait_mode_t gait)
 {
     if (gait == ROBOT_GAIT_TRIPOD) return &tripod_walk_profile;
+    // Trot is reachable only from pad mode 4.
+    if (gait == ROBOT_GAIT_TROT) return &trot_profile;
     if (gait < ROBOT_GAIT_TROT || gait > ROBOT_GAIT_CLIMB)
         return NULL;
     return &gait_profiles[gait];
@@ -1082,7 +1114,10 @@ static void update_attitude_reference_capture(bool armed, bool operator_idle,
 // pose_roll/pose_pitch are the operator's torso tilt (mode 2). The loop is
 // referenced to the posed attitude, so it corrects the floor and leaves the
 // requested tilt alone; the tilt itself is added by the caller.
-static void update_attitude_controller(bool armed, bool moving,
+// `hold` keeps the last correction (mode 4 on the move): on a line of two
+// feet the posture cannot be corrected, and its tilt is the fall the foot
+// placement needs to see, not something to level away.
+static void update_attitude_controller(bool armed, bool moving, bool hold,
                                        float pose_roll, float pose_pitch)
 {
     mpu6050_attitude_t measured = {0};
@@ -1105,7 +1140,9 @@ static void update_attitude_controller(bool armed, bool moving,
 
     const bool usable = armed && attitude_control.enabled &&
                         attitude_control.reference_valid && fresh;
-    if (!usable) {
+    if (usable && hold && attitude_control.active) {
+        // Correction and its trajectories stay where they are.
+    } else if (!usable) {
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
@@ -1202,14 +1239,20 @@ static bool gait_leg_scheduled_swing(robot_leg_t leg, bool motion_active, bool s
     return raw_phase >= gait_duty(state.active_gait);
 }
 
+// The IMU angle minus its reference is the torso tilt in the IK convention
+// (roll > 0 lowers the left side): the posture loop is stable only with that
+// sign. Mode 3 keeps its original inverted sign on purpose; it makes a swing
+// foot on the falling side land early, which is how that 0.48 s two-foot
+// phase catches itself (tests/test_robot_walk_balance.c).
 static bool estimate_swing_body(const robot_model_t *feedback,
                                 const robot_vec3_t planned_feet[4],
                                 const bool swing[4], robot_balance_pose_t commanded,
-                                robot_balance_pose_t *measured)
+                                bool legacy_sign, robot_balance_pose_t *measured)
 {
     if (!state.attitude_valid || !attitude_control.active || !attitude_control.reference_valid) return false;
-    const float roll = -wrap_radians(balance_imu.roll_radians - attitude_control.reference_roll_radians);
-    const float pitch = -wrap_radians(balance_imu.pitch_radians - attitude_control.reference_pitch_radians);
+    const float sign = legacy_sign ? -1.0f : 1.0f;
+    const float roll = sign * wrap_radians(balance_imu.roll_radians - attitude_control.reference_roll_radians);
+    const float pitch = sign * wrap_radians(balance_imu.pitch_radians - attitude_control.reference_pitch_radians);
     if (fabsf(roll) > ROBOT_ATTITUDE_MAX_ERROR_RAD || fabsf(pitch) > ROBOT_ATTITUDE_MAX_ERROR_RAD) return false;
     robot_vec3_t feet[4] = {0}; bool support[4] = {0};
     const int64_t now = esp_timer_get_time();
@@ -1457,6 +1500,84 @@ static void calibration_test_tick(const gait_input_t *input)
     ++state.tick_count;
 }
 
+static bool trot_four_feet_down(float global_phase)
+{
+    const float duty = robot_locomotion_duty_factor(&trot_profile);
+    float other = global_phase + 0.5f;
+    other -= floorf(other);
+    return global_phase < duty && other < duty;
+}
+
+// Mode 4 balance. Each swinging foot lands at the mean offset of the planted
+// feet plus the capture offset from the IMU (Cheetah 3 eq. 6 with the hip
+// drift). A touchdown teaches the CoM offset, which the torso then absorbs
+// (-learned), so the needed foot offset decays. Outside mode 4 the offsets
+// fade out while standing; a planted foot is never moved by more than that.
+static void apply_trot_balance(robot_vec3_t world_feet[ROBOT_LEG_COUNT],
+                               const bool swing[ROBOT_LEG_COUNT], bool walking, bool fade,
+                               float com_height_mm, float held_roll, float held_pitch)
+{
+    const float dt = (float)ROBOT_GAIT_PERIOD_MS / 1000.0f;
+    const robot_walk_balance_config_t config = robot_walk_balance_default_config();
+    if (fade) {
+        const float keep = 1.0f - dt / ROBOT_TROT_OFFSET_DECAY_S;
+        for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+            trot_balance.landed[leg].x *= keep; trot_balance.landed[leg].z *= keep;
+            trot_balance.current[leg] = trot_balance.landed[leg];
+        }
+    }
+    robot_planar_point_t support = {0};
+    int planted = 0;
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        if (walking && swing[leg]) continue;
+        support.x += trot_balance.landed[leg].x;
+        support.z += trot_balance.landed[leg].z;
+        ++planted;
+    }
+    if (planted) { support.x /= (float)planted; support.z /= (float)planted; }
+    robot_planar_point_t capture = support, xi = {0};
+    if (walking && state.attitude_valid && attitude_control.reference_valid) {
+        // Unplanned tilt in the IK convention: measured minus reference minus
+        // the posture held while trotting.
+        const robot_tilt_t tilt = {
+            .roll = wrap_radians(balance_imu.roll_radians -
+                                 attitude_control.reference_roll_radians) - held_roll,
+            .pitch = wrap_radians(balance_imu.pitch_radians -
+                                  attitude_control.reference_pitch_radians) - held_pitch,
+        };
+        const robot_tilt_t rate = {balance_imu.roll_rate_rad_s, balance_imu.pitch_rate_rad_s};
+        xi = robot_walk_balance_capture(&trot_balance, &config,
+                                        robot_walk_tilt_displacement(tilt, com_height_mm),
+                                        robot_walk_tilt_velocity(rate, com_height_mm),
+                                        com_height_mm, dt);
+        capture.x += xi.x;
+        capture.z += xi.z;
+    }
+    const float duty = robot_locomotion_duty_factor(&trot_profile);
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        const bool leg_swing = walking && swing[leg];
+        if (trot_was_swing[leg] && !leg_swing) {
+            const robot_planar_point_t landed = trot_balance.current[leg];
+            trot_learned_com.x = clampf(trot_learned_com.x + ROBOT_TROT_COM_LEARN_RATE * landed.x,
+                                        -ROBOT_TROT_COM_LEARN_LIMIT_MM, ROBOT_TROT_COM_LEARN_LIMIT_MM);
+            trot_learned_com.z = clampf(trot_learned_com.z + ROBOT_TROT_COM_LEARN_RATE * landed.z,
+                                        -ROBOT_TROT_COM_LEARN_LIMIT_MM, ROBOT_TROT_COM_LEARN_LIMIT_MM);
+        }
+        trot_was_swing[leg] = leg_swing;
+        float local = phase + leg_phase_offset(leg, ROBOT_GAIT_TROT);
+        local -= floorf(local);
+        const float swing_phase = leg_swing ? clampf((local - duty) / (1.0f - duty), 0.0f, 1.0f) : 0.0f;
+        world_feet[leg] = robot_walk_balance_apply(&trot_balance, &config, (robot_leg_t)leg,
+                                                   world_feet[leg], leg_swing, swing_phase, capture);
+    }
+    state.trot_capture_x_mm = xi.x;
+    state.trot_capture_z_mm = xi.z;
+    state.trot_support_x_mm = support.x;
+    state.trot_support_z_mm = support.z;
+    state.trot_learned_com_x_mm = trot_learned_com.x;
+    state.trot_learned_com_z_mm = trot_learned_com.z;
+}
+
 static void gait_tick(void)
 {
     const gait_input_t input = read_input();
@@ -1474,26 +1595,42 @@ static void gait_tick(void)
     const float magnitude = fminf(1.0f, sqrtf(input.forward * input.forward +
                                                input.lateral * input.lateral + input.turn * input.turn));
     const bool walk_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_WALK;
-    handle_dpad(input.dpad, robot_control_is_armed(), walk_mode && magnitude > 0.02f);
+    const bool trot_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_TROT;
+    // Mode 4 steers with a low-passed stick, as MIT ConvexMPCLocomotion
+    // filters its command; the raw stick only starts and stops the gait.
+    const float command_alpha = (float)ROBOT_GAIT_PERIOD_MS / 1000.0f /
+        (ROBOT_TROT_COMMAND_TIME_S + (float)ROBOT_GAIT_PERIOD_MS / 1000.0f);
+    const float raw_command[3] = {input.forward, input.lateral, input.turn};
+    for (int i = 0; i < 3; ++i)
+        trot_command[i] = trot_mode ? trot_command[i] + command_alpha * (raw_command[i] - trot_command[i])
+                                    : 0.0f;
+    gait_input_t drive = input;
+    if (trot_mode) {
+        drive.forward = trot_command[0];
+        drive.lateral = trot_command[1];
+        drive.turn = trot_command[2];
+    }
+    const float drive_magnitude = fminf(1.0f, sqrtf(drive.forward * drive.forward +
+                                                     drive.lateral * drive.lateral +
+                                                     drive.turn * drive.turn));
+    handle_dpad(input.dpad, robot_control_is_armed(),
+                (walk_mode && magnitude > 0.02f) || trot_walking);
     if (input.l1 && !l1_was_pressed) state.spin_mode = !state.spin_mode;
-    if (input.cross && !cross_was_pressed && !tripod_test_is_active()) jump_ticks_remaining = 33;
+    if (input.cross && !cross_was_pressed && !tripod_test_is_active() && !trot_walking)
+        jump_ticks_remaining = 33;
     l1_was_pressed = input.l1;
     cross_was_pressed = input.cross;
 
     const bool stepping_in_place = false;
     const bool jumping = jump_ticks_remaining != 0;
-    const bool spin = state.spin_mode && fabsf(input.turn) > 0.02f && !jumping;
-    state.active_gait = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_WALK
-                        ? ROBOT_GAIT_RUN : ROBOT_GAIT_STAND;
+    // L1 spin belongs to mode 3; mode 4 turns with the right stick only.
+    const bool spin = !trot_mode && state.spin_mode && fabsf(input.turn) > 0.02f && !jumping;
+    state.active_gait = walk_mode ? ROBOT_GAIT_RUN : trot_mode ? ROBOT_GAIT_TROT : ROBOT_GAIT_STAND;
     const bool motion_requested = !jumping && state.active_gait != ROBOT_GAIT_STAND &&
                                   (stepping_in_place || magnitude > 0.02f || spin);
     const bool operator_idle = magnitude < 0.02f && !spin && !jumping;
-    // A newly armed robot must establish its level reference from the actual
-    // neutral stance, not from the loose pre-arm pose. It therefore holds
-    // the stand until that short capture sequence has completed.
-    const bool active = motion_requested && !attitude_control.reference_pending;
-    const bool turning = fabsf(input.turn) > 0.02f && !stepping_in_place && !spin;
-    const float scale = stepping_in_place ? 1.0f : fmaxf(0.25f, magnitude);
+    const bool turning = fabsf(drive.turn) > 0.02f && !stepping_in_place && !spin;
+    const float scale = stepping_in_place ? 1.0f : fmaxf(0.25f, drive_magnitude);
     const float stride = gait_max_stride_mm(state.active_gait) * scale;
 
     robot_model_t feedback = {0};
@@ -1511,6 +1648,24 @@ static void gait_tick(void)
         }
     }
     if (armed && !trajectory_initialized) initialize_trajectories(&feedback);
+    // Mode 4 starts from four planted feet (phase 0.5) and stops only when
+    // all four are down again, so no foot is ever dropped from mid-air.
+    if (trot_walking && (!trot_mode || !armed)) {
+        trot_walking = false;
+    } else if (trot_walking && magnitude <= 0.02f && drive_magnitude < ROBOT_TROT_STOP_COMMAND &&
+               trot_four_feet_down(phase)) {
+        trot_walking = false;
+    } else if (!trot_walking && trot_mode && armed && !jumping && magnitude > 0.02f &&
+               !attitude_control.reference_pending && !tripod_test_is_active()) {
+        trot_walking = true;
+        phase = 0.5f;
+    }
+    state.trot_walking = trot_walking;
+    // A newly armed robot must establish its level reference from the actual
+    // neutral stance, not from the loose pre-arm pose. It therefore holds
+    // the stand until that short capture sequence has completed.
+    const bool active = trot_mode ? trot_walking
+                                  : motion_requested && !attitude_control.reference_pending;
     float reference_error = 0.0f, feedback_error = 0.0f;
     bool has_feedback = false;
     tracking_errors(&feedback, &reference_error, &has_feedback, &feedback_error);
@@ -1534,7 +1689,7 @@ static void gait_tick(void)
     const float pose_pitch = joint_trajectory_step(&pose_trajectory[1],
         pose_mode ? -input.forward * ROBOT_POSE_MAX_PITCH_RAD : 0.0f,
         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
-    update_attitude_controller(armed, active, pose_roll, pose_pitch);
+    update_attitude_controller(armed, active, trot_mode && active, pose_roll, pose_pitch);
     const float phase_rate = armed ? robot_gait_phase_rate(reference_error, has_feedback, feedback_error) : 1.0f;
 
     if (input.options && !options_was_pressed && !tripod_walk) {
@@ -1637,7 +1792,7 @@ static void gait_tick(void)
                                      !tripod_active && !jumping;
     dynamic_balance_step(dynamic_balance_desired(phase, use_dynamic_balance,
                                                  stepping_in_place, spin, turning,
-                                                 &input, stride, projected_com, body_height),
+                                                 &drive, stride, projected_com, body_height),
                          use_dynamic_balance);
 
     // There is one floating-body reference per tick: static crawl supplies a
@@ -1649,6 +1804,25 @@ static void gait_tick(void)
     if (tripod_walk && tripod_walk_entry < 1) {
         const float transfer = smootherstep(fminf(1, tripod_walk_entry * 2));
         planned_body_shift.x *= transfer; planned_body_shift.z *= transfer;
+    }
+    // Outside mode 3 the torso target is ramped, so a start, a stop or the
+    // learned CoM offset never steps it. Mode 3 keeps its original path.
+    if (walk_mode) {
+        joint_trajectory_reset(&body_shift_trajectory[0], planned_body_shift.x);
+        joint_trajectory_reset(&body_shift_trajectory[1], planned_body_shift.z);
+    } else {
+        if (trot_mode) {
+            planned_body_shift.x -= trot_learned_com.x;
+            planned_body_shift.z -= trot_learned_com.z;
+        }
+        const joint_trajectory_limits_t shift_limits = {
+            .maximum_velocity = ROBOT_BODY_SHIFT_RATE_MM_S,
+            .maximum_acceleration = ROBOT_BODY_SHIFT_ACCEL_MM_S2,
+        };
+        planned_body_shift.x = joint_trajectory_step(&body_shift_trajectory[0], planned_body_shift.x,
+                                                     (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, shift_limits);
+        planned_body_shift.z = joint_trajectory_step(&body_shift_trajectory[1], planned_body_shift.z,
+                                                     (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, shift_limits);
     }
     state.body_shift_x_mm = planned_body_shift.x;
     state.body_shift_z_mm = planned_body_shift.z;
@@ -1667,19 +1841,23 @@ static void gait_tick(void)
             : static_plan.enabled
                 ? static_crawl_foot_target((robot_leg_t)leg, phase, &static_plan, stride)
                 : foot_target_for_leg((robot_leg_t)leg, raw_phase, gait_duty(state.active_gait), motion_active,
-                                      stepping_in_place, jumping, spin, turning, &input, stride);
+                                      stepping_in_place, jumping, spin, turning, &drive, stride);
         if (tripod_walk && tripod_walk_entry < 1 && leg == tripod_walk_excluded)
             world_feet[leg].y *= smootherstep(fmaxf(0, tripod_walk_entry*2-1));
         swing[leg] = gait_leg_scheduled_swing((robot_leg_t)leg, motion_active, use_static_crawl);
 
     }
+    apply_trot_balance(world_feet, swing, trot_mode && motion_active, !trot_mode && !motion_active,
+                       body_height + jump_lift + ROBOT_BODY_COM_VERTICAL_OFFSET_MM,
+                       attitude_control.active ? attitude_control.correction_roll_radians : 0.0f,
+                       attitude_control.active ? attitude_control.correction_pitch_radians : 0.0f);
     const robot_balance_pose_t commanded_pose = {
         .position={body_pose.x_mm, body_height+jump_lift, body_pose.z_mm},
         .roll=body_pose.roll_radians, .pitch=body_pose.pitch_radians};
     robot_balance_pose_t measured_pose;
     const bool swing_balance = armed && motion_active && !jumping && !tripod_active &&
         (!tripod_walk || tripod_walk_entry >= 1) &&
-        estimate_swing_body(&feedback, world_feet, swing, commanded_pose, &measured_pose);
+        estimate_swing_body(&feedback, world_feet, swing, commanded_pose, !trot_mode, &measured_pose);
     state.swing_balance_active = swing_balance;
     state.tripod_walk_enabled = tripod_walk;
     state.tripod_walk_excluded = tripod_walk_excluded;
@@ -1707,12 +1885,15 @@ static void gait_tick(void)
                                         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f,
                                         (joint_trajectory_limits_t){
                                             .maximum_velocity = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
-                                            .maximum_acceleration = ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
+                                            .maximum_acceleration = trot_mode
+                                                ? ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2
+                                                : ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
                                         })
                 : reference;
             (void)robot_control_set_axis_target((robot_leg_t)leg, (robot_axis_type_t)axis,
                                                  command, ROBOT_GAIT_SPEED_RAW,
-                                                 ROBOT_GAIT_ACCELERATION);
+                                                 trot_mode ? ROBOT_TROT_SERVO_ACCELERATION
+                                                           : ROBOT_GAIT_ACCELERATION);
         }
     }
     state.jumping = tripod_active ? false : jumping;
@@ -1977,6 +2158,13 @@ esp_err_t robot_gait_arm(void)
     joint_trajectory_reset(&height_trajectory, body_height);
     joint_trajectory_reset(&pose_trajectory[0], 0.0f);
     joint_trajectory_reset(&pose_trajectory[1], 0.0f);
+    robot_walk_balance_reset(&trot_balance);
+    trot_learned_com = (robot_planar_point_t){0};
+    trot_walking = false;
+    for (int i = 0; i < 3; ++i) trot_command[i] = 0.0f;
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) trot_was_swing[leg] = false;
+    joint_trajectory_reset(&body_shift_trajectory[0], 0.0f);
+    joint_trajectory_reset(&body_shift_trajectory[1], 0.0f);
     xSemaphoreGive(gait_mutex);
     last_arm_preflight_slot = 0xff;
     const esp_err_t result = robot_control_arm();

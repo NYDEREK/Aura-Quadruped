@@ -52,7 +52,7 @@ wskazują **wybrany** tryb:
 | 1 | niebieska | Balans — stoi, IMU trzyma tułów w poziomie |
 | 2 | turkusowa | Poza tułowia — lewy drążek przechyla tułów (±15° na boki i przód/tył) |
 | 3 | fioletowa | Chód — zapisany profil Run (44 mm / 41 mm / 1,0 Hz / 52 %) |
-| 4 | żółta | Stoi (zarezerwowany) |
+| 4 | żółta | Trucht z balansem (test) — 40 mm / 30 mm / 1,5 Hz / 70 %, opis w [balans-chodu.md](balans-chodu.md) |
 | 5 | różowa | Stoi (zarezerwowany; chód na 3 łapach odłożony) |
 
 ## Sterowanie padem
@@ -60,10 +60,10 @@ wskazują **wybrany** tryb:
 | Przycisk | Działanie |
 |---|---|
 | Create | uzbrój / rozbrój |
-| D-pad → / ← | następny / poprzedni tryb, bez zawijania; ignorowane, gdy w trybie 3 drążek jest wychylony |
+| D-pad → / ← | następny / poprzedni tryb, bez zawijania; ignorowane w trakcie chodu (tryb 3 z wychylonym drążkiem, tryb 4 aż do postawienia czterech nóg) |
 | D-pad ↑ / ↓ | wysokość tułowia ±30 mm (płynnie, 60 mm/s), w zakresie 120–250 mm; po każdym uzbrojeniu wraca zapisana wysokość |
-| Lewy drążek | tryb 2: przechył tułowia; tryb 3: ruch przód/bok |
-| Prawy X | tryb 3: skręt |
+| Lewy drążek | tryb 2: przechył tułowia; tryby 3 i 4: ruch przód/bok |
+| Prawy X | tryby 3 i 4: skręt |
 | L1 | tryb 3: obrót w miejscu |
 | × | skok |
 | Options | test na 3 nogach (bez zmian) |

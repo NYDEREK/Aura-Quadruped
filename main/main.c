@@ -190,6 +190,10 @@ static void print_status(void)
            gait.phase_milli, gait.input_forward_milli, gait.input_lateral_milli,
            gait.input_turn_milli, gait.spin_mode, gait.jumping, gait.virtual_input,
            gait.phase_rate_percent, (unsigned long)gait.tick_count);
+    printf("Trot (mode 4): walking=%d capture=%.1f:%.1f support=%.1f:%.1f learned CoM=%.1f:%.1f mm (X fwd:Z left)\n",
+           gait.trot_walking, gait.trot_capture_x_mm, gait.trot_capture_z_mm,
+           gait.trot_support_x_mm, gait.trot_support_z_mm,
+           gait.trot_learned_com_x_mm, gait.trot_learned_com_z_mm);
     printf("Servo feedback: %u/%u live, %u moving, largest target error %.1f deg\n",
            feedback_axes, assigned_axes, moving_axes, maximum_tracking_error * 180.0f / 3.14159265f);
     aura_network_print_status();

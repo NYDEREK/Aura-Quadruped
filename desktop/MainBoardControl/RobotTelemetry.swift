@@ -124,7 +124,7 @@ enum AuraPadMode {
         case 1: "1 · BALANS"
         case 2: "2 · POZA TUŁOWIA"
         case 3: "3 · CHÓD"
-        case 4: "4 · STANIE"
+        case 4: "4 · TRUCHT (TEST)"
         case 5: "5 · STANIE"
         default: "—"
         }
