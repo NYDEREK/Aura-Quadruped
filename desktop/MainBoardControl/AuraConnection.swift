@@ -342,6 +342,9 @@ final class AuraConnection: NSObject, ObservableObject {
     @Published var currentID = 1
     @Published var newID = 2
     @Published var pixelCount = 8
+    // Status strip brightness in % as Aura last reported it (command 0x2e).
+    @Published var ledBrightness = 20.0
+    private var ledBrightnessWrite = false
     @Published var pixelColor = Color.green
     @Published var tofReferenceDistance = 200
     var tofSensors = [
@@ -663,6 +666,16 @@ final class AuraConnection: NSObject, ObservableObject {
               UInt8((color.redComponent * 255).rounded()),
               UInt8((color.greenComponent * 255).rounded()),
               UInt8((color.blueComponent * 255).rounded())], operation: 0x07)
+    }
+
+    func readLEDBrightness() {
+        ledBrightnessWrite = false
+        send([0x2e], operation: 0x2e)
+    }
+
+    func saveLEDBrightness() {
+        ledBrightnessWrite = true
+        send([0x2e, UInt8(max(0, min(100, ledBrightness.rounded())))], operation: 0x2e)
     }
 
     func refreshToFConfigurations() {
@@ -1460,6 +1473,10 @@ final class AuraConnection: NSObject, ObservableObject {
                 message = "Nowy adres serwa: \(data[6])."
                 scanServos()
             case 0x07: message = "Polecenie LED wykonane."
+            case 0x2e:
+                ledBrightness = Double(data[6])
+                if ledBrightnessWrite { message = "Jasność paska zapisana w Aurze: \(data[6]) %." }
+                ledBrightnessWrite = false
             case 0x09:
                 torqueEnabled = false
                 if let mode = ServoOperatingMode(rawValue: data[6]) { operatingMode = mode }

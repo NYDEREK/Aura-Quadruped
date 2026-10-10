@@ -26,6 +26,7 @@
 #include "robot_control.h"
 #include "robot_gait.h"
 #include "tof.h"
+#include "status_led.h"
 #include "ws2812.h"
 
 #define AURA_NAME "Aura Main Board"
@@ -95,6 +96,9 @@ enum {
     // persisted commissioning data and is rejected while torque is active.
     AURA_CMD_ROBOT_MOTION_TUNING = 0x2c,
     AURA_CMD_ROBOT_TRIPOD_WALK = 0x2d,
+    // Status strip brightness: `2e` reads, `2e percent` saves (0...100).
+    // The result detail byte carries the brightness now in use.
+    AURA_CMD_LED_BRIGHTNESS = 0x2e,
     AURA_EVT_POWER = 0x10,
     AURA_EVT_IMU = 0x11,
     AURA_EVT_TOF = 0x12,
@@ -951,6 +955,13 @@ static void process_command(const aura_command_t *command)
         detail = (uint8_t)gait;
         break;
     }
+    case AURA_CMD_LED_BRIGHTNESS:
+        if (command->size == 1) result = ESP_OK;
+        else if (command->size == 2 && command->data[1] <= 100)
+            result = status_led_set_brightness(command->data[1]);
+        else break;
+        detail = status_led_brightness();
+        break;
     case AURA_CMD_ROBOT_TRIPOD_WALK:
         if (command->size != 3 || command->data[1] > 1 || command->data[2] >= ROBOT_LEG_COUNT) break;
         result = robot_gait_set_tripod_walk(command->data[1] != 0, (robot_leg_t)command->data[2]);

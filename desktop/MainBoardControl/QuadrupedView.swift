@@ -36,9 +36,8 @@ private enum QuadGait: String, CaseIterable {
         }
     }
     var isSingleFoot: Bool { self == .crawl || self == .climb }
-    var next: QuadGait {
-        Self.auraMode(Int(robot_locomotion_next_mode(UInt8(boardID))))
-    }
+    // Offline Test IK only: R1 steps through the planner's gaits.
+    var next: QuadGait { Self.auraMode((boardID + 1) % 6) }
     static func auraMode(_ value: Int) -> QuadGait {
         switch value {
         case 1: .trot
@@ -637,11 +636,8 @@ private final class QuadrupedModel: ObservableObject {
             frame_width_mm: Float(geometry.frameWidth), corner_inset_mm: Float(geometry.cornerInset),
             abduction_link_mm: Float(geometry.yawLink), upper_leg_mm: Float(geometry.upperLeg),
             lower_leg_mm: Float(geometry.lowerLeg))
-        request.body_height_mm = Float(geometry.bodyHeight + drive.height * 35)
-        request.com_height_mm = request.body_height_mm - 25
-        request.com_offset_x_mm = Float(staticComForward); request.com_offset_z_mm = Float(staticComLeft)
-        request.joint_velocity_limit = 2 * Float.pi * 3400 / 4095
-        request.joint_acceleration_limit = 2 * Float.pi * 25400 / 4095
+        // Same as ESP: CoM height is the torso height minus 25 mm.
+        request.com_height_mm = Float(geometry.bodyHeight + drive.height * 35) - 25
         request.lateral_stance_mm = Float(geometry.lateralStance)
         request.forward = Float(drive.forward); request.lateral = Float(drive.lateral)
         request.turn = Float(drive.turn)
@@ -930,13 +926,8 @@ private final class QuadrupedModel: ObservableObject {
         let currentJumpLift = jumpLift(at: time)
         let jumping = currentJumpLift > 0
         let steppingInPlace = (selectedGait == .trot || selectedGait == .tripod) && rawMagnitude < 0.02
-        func filtered(_ before: Double, _ after: Double) -> Double {
-            Double(robot_locomotion_filter_command(Float(before), Float(after), Float(dt)))
-        }
-        filteredDrive = (filtered(filteredDrive.forward, rawDrive.forward),
-                         filtered(filteredDrive.lateral, rawDrive.lateral),
-                         filtered(filteredDrive.turn, rawDrive.turn),
-                         filtered(filteredDrive.height, rawDrive.height))
+        // The firmware applies the stick command directly; so does the preview.
+        filteredDrive = rawDrive
         let drive = filteredDrive
         let magnitude = min(1, sqrt(drive.forward * drive.forward + drive.lateral * drive.lateral + drive.turn * drive.turn))
         // In Stanie the robot is still ready: the first stick command starts a
@@ -959,7 +950,7 @@ private final class QuadrupedModel: ObservableObject {
                 stride: Double(profile.strideMm) * max(0.25, steppingInPlace ? 0.35 : magnitude),
                 steppingInPlace: steppingInPlace, turnCentre: nil, spin: spinRequested)
             cadence = robot_body_trajectory_build(&bodyTrajectory, &request)
-                ? Double(bodyTrajectory.effective_frequency_hz) : 0
+                ? profile.frequencyHz : 0
         }
         if moving { previewPhase = (previewPhase + dt * cadence).truncatingRemainder(dividingBy: 1) }
         let phaseTime = previewPhase
@@ -1036,11 +1027,12 @@ private final class QuadrupedModel: ObservableObject {
                         Float(phaseTime), &request.profile).support_contact
                     : robot_locomotion_leg_phase(UInt8(gait.boardID), index,
                         Float(phaseTime), &request.profile).support_contact
-                request.profile.frequency_centi_hz = UInt16(max(1, cadence * 100))
-                let twist = robot_body_trajectory_twist(&request)
+                // Stance velocity from the same foot path, one small phase step ahead.
+                let step = 0.002
+                let ahead = robot_body_trajectory_foot(&request, index, Float(phaseTime + step))
                 footVelocity = stance
-                    ? QuadVector(x: -Double(twist.x_mm_s) + Double(twist.yaw_rad_s) * target.z,
-                                 y: 0, z: -Double(twist.z_mm_s) - Double(twist.yaw_rad_s) * target.x)
+                    ? QuadVector(x: (Double(ahead.x) - target.x) / step * cadence, y: 0,
+                                 z: (Double(ahead.z) - target.z) / step * cadence)
                     : QuadVector(x: 0, y: 0, z: 0)
                 if let centre { guideRadii[leg] = hypot(footBase.x-centre.x, footBase.z-centre.z) }
             } else {
@@ -1153,14 +1145,14 @@ private final class QuadrupedModel: ObservableObject {
         let reportedHeight = Double(state.bodyHeight)
         let height = reportedHeight.isFinite && (80...350).contains(reportedHeight)
             ? reportedHeight : geometry.bodyHeight
-        let selectedGait = QuadGait.auraMode(state.selectedGait)
         let activeGait = QuadGait.auraMode(state.activeGait)
         let activeProfile = locomotionProfile(for: activeGait)
         let input = (forward: state.forward, lateral: state.lateral,
                      turn: state.turn, height: (height - geometry.bodyHeight) / 35)
         let magnitude = min(1, sqrt(input.forward * input.forward +
                                      input.lateral * input.lateral + input.turn * input.turn))
-        let steppingInPlace = (selectedGait == .trot || selectedGait == .tripod) && magnitude < 0.02
+        // Aura's pad modes never step in place; only mode 3 walks.
+        let steppingInPlace = false
         let moving = !state.jumping && !state.spinMode && activeGait != .stand &&
                      (steppingInPlace || magnitude > 0.02)
         let staticCrawl = activeGait.isSingleFoot && moving && abs(input.turn) <= 0.02
@@ -2358,7 +2350,7 @@ struct QuadrupedView: View {
         let contacts = hud.frame.contacts
         GeometryReader { available in
             ScrollView([.vertical, .horizontal]) { VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) { VStack(alignment: .leading, spacing: 3) { Text("Quadruped").font(.title2.bold()); Text("Scena 3D • cele osi z Aury • 12 serw TTL").foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 2) { Label(state.tickCount > 0 ? "Aura: planner 50 Hz" : "Oczekiwanie na Aurę", systemImage: "cpu").foregroundStyle(state.tickCount > 0 ? .green : .secondary); Text(state.calibrationLeg != nil ? "KALIBRACJA: 1 NOGA FIZYCZNA" : state.jumping ? "SKOK" : state.spinMode ? "L1: OBRÓT W MIEJSCU" : "R1: \(QuadGait.auraMode(state.selectedGait).rawValue)").font(.caption.monospaced()).foregroundStyle(state.jumping ? .yellow : state.spinMode ? .mint : .secondary) } }
+                HStack(alignment: .firstTextBaseline) { VStack(alignment: .leading, spacing: 3) { Text("Quadruped").font(.title2.bold()); Text("Scena 3D • cele osi z Aury • 12 serw TTL").foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 2) { Label(state.tickCount > 0 ? "Aura: planner 50 Hz" : "Oczekiwanie na Aurę", systemImage: "cpu").foregroundStyle(state.tickCount > 0 ? .green : .secondary); Text(state.calibrationLeg != nil ? "KALIBRACJA: 1 NOGA FIZYCZNA" : state.jumping ? "SKOK" : state.spinMode ? "L1: OBRÓT W MIEJSCU" : "TRYB \(AuraPadMode.title(state.selectedGait))").font(.caption.monospaced()).foregroundStyle(state.jumping ? .yellow : state.spinMode ? .mint : .secondary) } }
                 HSplitView {
                     QuadrupedSceneView(model: model, channel: channel)
                         .frame(minWidth: 680, idealWidth: 860, maxWidth: .infinity, minHeight: 560)
@@ -2383,7 +2375,7 @@ struct QuadrupedView: View {
                                 Text("Ograniczenie trajektorii: sprawdź zakresy nóg, wysokość i długość kroku.")
                                     .font(.caption).foregroundStyle(.orange)
                             }
-                            GroupBox("Sterowanie") { VStack(alignment: .leading, spacing: 8) { Text("Lewy drążek  ruch przód/bok"); Text("Prawy X  skręt po łukach CoR • prawy Y  korekta wysokości"); Divider(); Text("R1  Stanie → Trot → Krok 1× → Run → Climb → 3 łapy → Stanie"); Text("Krok 1×: trzy nogi podpierają, jedna robi niski krok."); Text("L1  obrót korpusu w miejscu; prawy X steruje obrotem"); Text("×  skok"); Text("Stanie rusza dopiero po wychyleniu drążka; Trot stepuje w miejscu.") }.font(.caption) }
+                            GroupBox("Sterowanie") { VStack(alignment: .leading, spacing: 8) { Text("D-pad → / ←  następny / poprzedni tryb (1–5)"); Text("D-pad ↑ / ↓  wysokość tułowia ±30 mm do rozbrojenia"); Divider(); Text("1 balans • 2 poza tułowia • 3 chód • 4, 5 stanie"); Text("Tryb 2: lewy drążek przechyla tułów na boki i przód/tył"); Text("Tryb 3: lewy drążek ruch przód/bok, prawy X skręt"); Text("L1  obrót w miejscu (tryb 3); prawy X steruje obrotem"); Text("×  skok") }.font(.caption) }
                         GroupBox("Wysokość stania") { VStack(alignment: .leading, spacing: 8) { HStack(spacing: 8) { Slider(value: $model.bodyHeight, in: 120...250, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotBodyHeight(Int(model.bodyHeight.rounded())) } }).disabled(!aura.isConnected || aura.robotState.armed); Text("\(Int(model.bodyHeight.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 62, alignment: .trailing) }; Text(aura.robotState.armed ? "Zmień po rozbrojeniu robota." : "Zapisywane w Aurze; zmiana nie wysyła ruchu.").font(.caption).foregroundStyle(.secondary) }
                         }
                         GroupBox("Rozstaw końców stóp") { VStack(alignment: .leading, spacing: 8) {

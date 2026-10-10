@@ -116,3 +116,17 @@ extension AuraRobotState {
         (UInt32(data[offset + 2]) << 16) | (UInt32(data[offset + 3]) << 24)
     }
 }
+
+// Pad modes chosen on Aura with the D-pad; telemetry byte 3.
+enum AuraPadMode {
+    static func title(_ mode: Int) -> String {
+        switch mode {
+        case 1: "1 · BALANS"
+        case 2: "2 · POZA TUŁOWIA"
+        case 3: "3 · CHÓD"
+        case 4: "4 · STANIE"
+        case 5: "5 · STANIE"
+        default: "—"
+        }
+    }
+}

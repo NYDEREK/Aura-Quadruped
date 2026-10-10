@@ -16,6 +16,17 @@ typedef enum {
     ROBOT_GAIT_TRIPOD = 5,
 } robot_gait_mode_t;
 
+// Pad modes, chosen with D-pad right (+) / left (-) without wrapping. The
+// DualSense shows the number as white dots and the strip as pixel 2's colour.
+// The snapshot field `selected_gait` carries this number (telemetry byte 3).
+typedef enum {
+    ROBOT_MODE_BALANCE = 1,  // stands; the IMU loop keeps the torso level
+    ROBOT_MODE_POSE = 2,     // stands; the left stick tilts the torso
+    ROBOT_MODE_WALK = 3,     // diagonal gait with the saved Run profile
+    ROBOT_MODE_STAND_4 = 4,  // reserved, stands
+    ROBOT_MODE_STAND_5 = 5,  // reserved, stands
+} robot_mode_t;
+
 // A UART-only commissioning source. It uses the same gait, kinematics and
 // safety path as a real controller; it never bypasses the actuator layer.
 typedef struct {
@@ -44,7 +55,7 @@ typedef struct {
 // This snapshot is calculated on Aura at 50 Hz.  The desktop receives it as
 // telemetry and must never be the source of physical servo targets.
 typedef struct {
-    robot_gait_mode_t selected_gait;
+    robot_gait_mode_t selected_gait;  // pad mode, robot_mode_t 1...5
     robot_gait_mode_t active_gait;
     bool spin_mode;
     bool jumping;

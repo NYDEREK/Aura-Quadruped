@@ -45,16 +45,32 @@ oddzielnych kolorów lewej i prawej strony. Układ raportu pochodzi z
 Lightbar i dioda 1 paska wskazują stan: pomarańczowy — rozbrojony,
 zielony — uzbrojony, czerwony — test kalibracyjny, migający czerwony —
 zatrzaśnięty błąd. Liczba białych kropek pada i kolor diody 2 paska
-wskazują **wybrany** profil:
+wskazują **wybrany** tryb:
 
 | Kropki | Dioda 2 | Tryb |
 |---:|---|---|
-| 0 | biała | Stanie |
-| 1 | niebieska | Trot |
-| 2 | turkusowa | Krok 1× |
-| 3 | fioletowa | Run |
-| 4 | żółta | Climb |
-| 5 | różowa | Chodzenie na 3 łapach |
+| 1 | niebieska | Balans — stoi, IMU trzyma tułów w poziomie |
+| 2 | turkusowa | Poza tułowia — lewy drążek przechyla tułów (±15° na boki i przód/tył) |
+| 3 | fioletowa | Chód — zapisany profil Run (44 mm / 41 mm / 1,0 Hz / 52 %) |
+| 4 | żółta | Stoi (zarezerwowany) |
+| 5 | różowa | Stoi (zarezerwowany; chód na 3 łapach odłożony) |
+
+## Sterowanie padem
+
+| Przycisk | Działanie |
+|---|---|
+| Create | uzbrój / rozbrój |
+| D-pad → / ← | następny / poprzedni tryb, bez zawijania; ignorowane, gdy w trybie 3 drążek jest wychylony |
+| D-pad ↑ / ↓ | wysokość tułowia ±30 mm (płynnie, 60 mm/s), w zakresie 120–250 mm; po każdym uzbrojeniu wraca zapisana wysokość |
+| Lewy drążek | tryb 2: przechył tułowia; tryb 3: ruch przód/bok |
+| Prawy X | tryb 3: skręt |
+| L1 | tryb 3: obrót w miejscu |
+| × | skok |
+| Options | test na 3 nogach (bez zmian) |
+
+R1 i prawy drążek w pionie nie mają już przypisanej funkcji. Aura startuje w trybie 1.
+W trybie 2 regulator IMU ma referencję przesuniętą o zadany przechył: kompensuje
+pochylenie podłoża, ale nie kasuje przechyłu z drążka.
 
 ## Pasek LED (8 diod)
 
@@ -62,6 +78,7 @@ wskazują **wybrany** profil:
 |---|---|
 | 1 | Stan robota (jak lightbar) |
 | 2 | Wybrany tryb (tabela wyżej); zgaszona przy błędzie i kalibracji |
+| — | Jasność całego paska 0–100 % (domyślnie 20 %): aplikacja, zakładka LED, albo UART `led <0-100>`; zapis w NVS `aura_led/bright` |
 | 3–8 | Bateria 3S: 10,0 V = 0 %, 12,6 V = 100 %, każda dioda to 1/6 zakresu |
 
 Kolor paska baterii: zielony od 11,0 V, pomarańczowy poniżej 11,0 V,
@@ -74,9 +91,8 @@ zgaszone, a uzbrojenie jest zablokowane. Robot już uzbrojony nie jest
 rozbrajany automatycznie przy spadku napięcia.
 
 Kontrolki używają wycentrowanych wzorów Sony: 0x00, 0x04, 0x0a, 0x15,
-0x1b, 0x1f. Błąd i test kalibracji wygaszają kropki. W trybie Stanie
-wychylenie drążka może uruchomić Trot, ale wskazanie nadal dotyczy
-wybranego profilu, zgodnie z wyborem R1.
+0x1b, 0x1f (tryb 1 = jedna kropka … tryb 5 = pięć). Błąd i test kalibracji
+wygaszają kropki.
 
 ESP odświeża wspólny raport koloru i kontrolek z dotychczasową częstotliwością
 10 Hz; nie dodaje osobnego strumienia BT. Raport ma nadal 79 bajtów z nagłówkiem

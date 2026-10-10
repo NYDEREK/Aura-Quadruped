@@ -38,6 +38,22 @@
 #define ROBOT_MIN_BODY_HEIGHT_MM 120
 #define ROBOT_MAX_BODY_HEIGHT_MM 250
 #define ROBOT_BODY_HEIGHT_ADJUST_MM 35.0f
+// D-pad up/down: one click moves the standing height by 30 mm until the next
+// arm. The step is ramped, because it moves a loaded torso.
+#define ROBOT_DPAD_HEIGHT_STEP_MM 30
+#define ROBOT_HEIGHT_RATE_MM_S 60.0f
+#define ROBOT_HEIGHT_ACCEL_MM_S2 300.0f
+// Mode 2: full stick tilts the torso by this much, with a bounded rate.
+#define ROBOT_POSE_MAX_ROLL_RAD (15.0f * ROBOT_PI / 180.0f)
+#define ROBOT_POSE_MAX_PITCH_RAD (15.0f * ROBOT_PI / 180.0f)
+#define ROBOT_POSE_SLEW_RAD_S (40.0f * ROBOT_PI / 180.0f)
+#define ROBOT_POSE_ACCEL_RAD_S2 (200.0f * ROBOT_PI / 180.0f)
+// DualSense hat switch, low nibble of buttons[0]; diagonals are ignored.
+#define DPAD_UP 0
+#define DPAD_RIGHT 2
+#define DPAD_DOWN 4
+#define DPAD_LEFT 6
+#define DPAD_NONE 8
 #define ROBOT_GAIT_SINGLE_FOOT_DEFAULT_STRIDE_MM 42
 #define ROBOT_GAIT_SINGLE_FOOT_DEFAULT_LIFT_MM 18
 #define ROBOT_GAIT_SINGLE_FOOT_MIN_STRIDE_MM 20
@@ -145,7 +161,7 @@
 typedef struct {
     bool connected;
     bool has_input;
-    bool r1;
+    uint8_t dpad;
     bool l1;
     bool cross;
     bool options;
@@ -169,7 +185,11 @@ static struct {
     robot_leg_t leg;
     float phase;
 } calibration_test;
-static bool r1_was_pressed, l1_was_pressed, cross_was_pressed, options_was_pressed;
+static bool l1_was_pressed, cross_was_pressed, options_was_pressed;
+static uint8_t dpad_was = DPAD_NONE;
+static int16_t height_offset_mm;
+static joint_trajectory_t height_trajectory;
+static joint_trajectory_t pose_trajectory[2];
 static float phase;
 static uint32_t jump_ticks_remaining;
 static joint_trajectory_t joint_trajectory[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
@@ -301,14 +321,13 @@ static gait_input_t read_input(void)
         return (gait_input_t){
             .connected = true,
             .has_input = true,
-            .r1 = (pad.buttons[1] & 0x02u) != 0,
+            .dpad = pad.buttons[0] & 0x0fu,
             .l1 = (pad.buttons[1] & 0x01u) != 0,
             .cross = (pad.buttons[0] & 0x20u) != 0,
             .options = (pad.buttons[1] & 0x20u) != 0,
             .forward = -stick(pad.left_y),
             .lateral = stick(pad.left_x),
             .turn = stick(pad.right_x),
-            .height = -stick(pad.right_y),
         };
     }
 
@@ -322,6 +341,7 @@ static gait_input_t read_input(void)
             .connected = true,
             .has_input = fabsf(forward) > 0.02f || fabsf(lateral) > 0.02f ||
                          fabsf(turn) > 0.02f || fabsf(height) > 0.02f,
+            .dpad = DPAD_NONE,
             .forward = forward, .lateral = lateral, .turn = turn, .height = height,
         };
     }
@@ -336,14 +356,13 @@ static gait_input_t read_input(void)
     return (gait_input_t){
         .connected = connected,
         .has_input = connected && pad.has_input,
-        .r1 = (pad.buttons[1] & 0x02u) != 0,
+        .dpad = connected ? (uint8_t)(pad.buttons[0] & 0x0fu) : DPAD_NONE,
         .l1 = (pad.buttons[1] & 0x01u) != 0,
         .cross = (pad.buttons[0] & 0x20u) != 0,
         .options = (pad.buttons[1] & 0x20u) != 0,
         .forward = connected ? -stick(pad.left_y) : 0.0f,
         .lateral = connected ? stick(pad.left_x) : 0.0f,
         .turn = connected ? stick(pad.right_x) : 0.0f,
-        .height = connected ? -stick(pad.right_y) : 0.0f,
     };
 }
 
@@ -374,9 +393,27 @@ static float static_crawl_preload_fraction(void)
     return clampf(1.0f - 4.0f * (1.0f - duty), 0.02f, 0.60f);
 }
 
-static robot_gait_mode_t next_gait(robot_gait_mode_t gait)
+// D-pad left/right steps through modes 1...5 without wrapping; up/down
+// moves the standing height while armed. A mode change is refused while the
+// operator is driving mode 3, so a gait is never cut off mid-stride.
+static void handle_dpad(uint8_t dpad, bool armed, bool walking)
 {
-    return gait == ROBOT_GAIT_CLIMB ? ROBOT_GAIT_STAND : (robot_gait_mode_t)(gait + 1);
+    if (dpad == dpad_was) return;
+    dpad_was = dpad;
+    if (dpad == DPAD_RIGHT || dpad == DPAD_LEFT) {
+        if (walking) {
+            ESP_LOGW("robot_gait", "mode change ignored: release the sticks first");
+            return;
+        }
+        const int mode = (int)state.selected_gait + (dpad == DPAD_RIGHT ? 1 : -1);
+        if (mode >= ROBOT_MODE_BALANCE && mode <= ROBOT_MODE_STAND_5)
+            state.selected_gait = (robot_gait_mode_t)mode;
+    } else if ((dpad == DPAD_UP || dpad == DPAD_DOWN) && armed) {
+        const int step = dpad == DPAD_UP ? ROBOT_DPAD_HEIGHT_STEP_MM : -ROBOT_DPAD_HEIGHT_STEP_MM;
+        height_offset_mm = (int16_t)clampf((float)(height_offset_mm + step),
+                                           (float)(ROBOT_MIN_BODY_HEIGHT_MM - nominal_body_height_mm),
+                                           (float)(ROBOT_MAX_BODY_HEIGHT_MM - nominal_body_height_mm));
+    }
 }
 
 static float leg_phase_offset(int leg, robot_gait_mode_t gait)
@@ -1042,7 +1079,11 @@ static void update_attitude_reference_capture(bool armed, bool operator_idle,
     ESP_LOGI("robot_gait", "IMU attitude reference captured after neutral stance settled");
 }
 
-static void update_attitude_controller(bool armed, bool moving)
+// pose_roll/pose_pitch are the operator's torso tilt (mode 2). The loop is
+// referenced to the posed attitude, so it corrects the floor and leaves the
+// requested tilt alone; the tilt itself is added by the caller.
+static void update_attitude_controller(bool armed, bool moving,
+                                       float pose_roll, float pose_pitch)
 {
     mpu6050_attitude_t measured = {0};
     mpu6050_get_attitude(&measured);
@@ -1071,10 +1112,10 @@ static void update_attitude_controller(bool armed, bool moving)
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     } else {
-        const float roll_error = wrap_radians(attitude_control.reference_roll_radians -
-                                              measured.roll_radians);
-        const float pitch_error = wrap_radians(attitude_control.reference_pitch_radians -
-                                               measured.pitch_radians);
+        const float roll_error = wrap_radians(attitude_control.reference_roll_radians +
+                                              pose_roll - measured.roll_radians);
+        const float pitch_error = wrap_radians(attitude_control.reference_pitch_radians +
+                                               pose_pitch - measured.pitch_radians);
         // Keep a bounded corrective command even beyond the nominal
         // envelope. Dropping it suddenly to zero during a fall was a kick.
         {
@@ -1427,21 +1468,23 @@ static void gait_tick(void)
         calibration_test_tick(&input);
         return;
     }
-    if (tripod_walk_enabled) state.selected_gait = ROBOT_GAIT_TRIPOD;
-    else if (input.r1 && !r1_was_pressed) state.selected_gait = next_gait(state.selected_gait);
+    // Pad mode 5 stands for now: three-leg walking is parked, whatever the
+    // saved app setting says. Mode 3 runs the saved Run profile unchanged.
+    const bool tripod_walk = false;
+    const float magnitude = fminf(1.0f, sqrtf(input.forward * input.forward +
+                                               input.lateral * input.lateral + input.turn * input.turn));
+    const bool walk_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_WALK;
+    handle_dpad(input.dpad, robot_control_is_armed(), walk_mode && magnitude > 0.02f);
     if (input.l1 && !l1_was_pressed) state.spin_mode = !state.spin_mode;
-    if (input.cross && !cross_was_pressed && !tripod_test_is_active() && !tripod_walk_enabled) jump_ticks_remaining = 33;
-    r1_was_pressed = input.r1;
+    if (input.cross && !cross_was_pressed && !tripod_test_is_active()) jump_ticks_remaining = 33;
     l1_was_pressed = input.l1;
     cross_was_pressed = input.cross;
 
-    const float magnitude = fminf(1.0f, sqrtf(input.forward * input.forward +
-                                               input.lateral * input.lateral + input.turn * input.turn));
-    const bool stepping_in_place = (state.selected_gait == ROBOT_GAIT_TROT || tripod_walk_enabled) && magnitude < 0.02f;
+    const bool stepping_in_place = false;
     const bool jumping = jump_ticks_remaining != 0;
     const bool spin = state.spin_mode && fabsf(input.turn) > 0.02f && !jumping;
-    state.active_gait = state.selected_gait == ROBOT_GAIT_STAND && magnitude > 0.02f
-                        ? ROBOT_GAIT_TROT : state.selected_gait;
+    state.active_gait = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_WALK
+                        ? ROBOT_GAIT_RUN : ROBOT_GAIT_STAND;
     const bool motion_requested = !jumping && state.active_gait != ROBOT_GAIT_STAND &&
                                   (stepping_in_place || magnitude > 0.02f || spin);
     const bool operator_idle = magnitude < 0.02f && !spin && !jumping;
@@ -1477,10 +1520,24 @@ static void gait_tick(void)
     // task owns I2C sampling; the 50 Hz gait loop never blocks on the sensor.
     // `active` is established from the pad before this point. The attitude
     // loop changes to moving gains on that same tick as the gait generator.
-    update_attitude_controller(armed, active);
+    const joint_trajectory_limits_t pose_limits = {
+        .maximum_velocity = ROBOT_POSE_SLEW_RAD_S,
+        .maximum_acceleration = ROBOT_POSE_ACCEL_RAD_S2,
+    };
+    // Mode 2: stick right leans right (negative roll), stick forward lowers
+    // the nose (negative pitch). Leaving the mode returns to level smoothly.
+    const bool pose_mode = armed && !jumping &&
+                           state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_POSE;
+    const float pose_roll = joint_trajectory_step(&pose_trajectory[0],
+        pose_mode ? -input.lateral * ROBOT_POSE_MAX_ROLL_RAD : 0.0f,
+        (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
+    const float pose_pitch = joint_trajectory_step(&pose_trajectory[1],
+        pose_mode ? -input.forward * ROBOT_POSE_MAX_PITCH_RAD : 0.0f,
+        (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
+    update_attitude_controller(armed, active, pose_roll, pose_pitch);
     const float phase_rate = armed ? robot_gait_phase_rate(reference_error, has_feedback, feedback_error) : 1.0f;
 
-    if (input.options && !options_was_pressed && !tripod_walk_enabled) {
+    if (input.options && !options_was_pressed && !tripod_walk) {
         if (!armed) {
             ESP_LOGW("robot_gait", "Options ignored: robot is disarmed");
         } else if (magnitude > 0.02f || jumping) {
@@ -1531,7 +1588,7 @@ static void gait_tick(void)
     if (use_static_crawl) {
         static_crawl_advance_phase(phase_rate, &input, stride, reference_error, has_feedback,
                                    feedback_error);
-    } else if (motion_active && (!tripod_walk_enabled || tripod_walk_entry >= 1.0f)) {
+    } else if (motion_active && (!tripod_walk || tripod_walk_entry >= 1.0f)) {
         // Dynamic gaits own a fixed 50 Hz clock. Servo feedback is not a
         // contact sensor and must not dilate a phase shared by torso and feet.
         const float requested_advance = gait_hz(state.active_gait) *
@@ -1546,23 +1603,31 @@ static void gait_tick(void)
     state.contact_control_active = false;
     state.contact_touchdown_waiting = false;
 
-    if (tripod_walk_enabled && active && armed) {
+    if (tripod_walk && active && armed) {
         if (tripod_walk_entry == 0) phase = 0;
         tripod_walk_entry = fminf(1, tripod_walk_entry + 0.02f / 1.2f);
     }
     if (tripod_active) tripod_test_tick(reference_error);
 
-    const float requested_body_height = (float)nominal_body_height_mm +
-                                        input.height * ROBOT_BODY_HEIGHT_ADJUST_MM;
+    // D-pad height offset (reset on every arm), ramped like a body move.
+    // input.height is now only the UART virtual source.
+    const float height_target = clampf((float)(nominal_body_height_mm + height_offset_mm),
+                                       ROBOT_MIN_BODY_HEIGHT_MM, ROBOT_MAX_BODY_HEIGHT_MM);
+    const float requested_body_height = joint_trajectory_step(&height_trajectory, height_target,
+        (float)ROBOT_GAIT_PERIOD_MS / 1000.0f,
+        (joint_trajectory_limits_t){
+            .maximum_velocity = ROBOT_HEIGHT_RATE_MM_S,
+            .maximum_acceleration = ROBOT_HEIGHT_ACCEL_MM_S2,
+        }) + input.height * ROBOT_BODY_HEIGHT_ADJUST_MM;
     const float body_height = tripod_active
         ? tripod_body_height_mm + tripod_test_body_lift_mm() : requested_body_height;
     const float jump_u = jumping ? (float)(33 - jump_ticks_remaining) / 32.0f : 0.0f;
     const float jump_lift = jumping ? 52.0f * sinf(ROBOT_PI * jump_u) : 0.0f;
     if (jump_ticks_remaining) --jump_ticks_remaining;
-    const float planned_roll = attitude_control.active
-        ? attitude_control.correction_roll_radians : 0.0f;
-    const float planned_pitch = attitude_control.active
-        ? attitude_control.correction_pitch_radians : 0.0f;
+    const float planned_roll = pose_roll + (attitude_control.active
+        ? attitude_control.correction_roll_radians : 0.0f);
+    const float planned_pitch = pose_pitch + (attitude_control.active
+        ? attitude_control.correction_pitch_radians : 0.0f);
     const robot_planar_point_t projected_com = projected_com_for_body_pose(
         planned_roll, planned_pitch);
     if (use_static_crawl) static_crawl_prepare_slot_plan(phase, projected_com);
@@ -1581,7 +1646,7 @@ static void gait_tick(void)
     robot_vec3_t planned_body_shift = static_plan.enabled
         ? static_plan.body_shift
         : (use_dynamic_balance ? dynamic_balance_shift : (robot_vec3_t){0});
-    if (tripod_walk_enabled && tripod_walk_entry < 1) {
+    if (tripod_walk && tripod_walk_entry < 1) {
         const float transfer = smootherstep(fminf(1, tripod_walk_entry * 2));
         planned_body_shift.x *= transfer; planned_body_shift.z *= transfer;
     }
@@ -1603,7 +1668,7 @@ static void gait_tick(void)
                 ? static_crawl_foot_target((robot_leg_t)leg, phase, &static_plan, stride)
                 : foot_target_for_leg((robot_leg_t)leg, raw_phase, gait_duty(state.active_gait), motion_active,
                                       stepping_in_place, jumping, spin, turning, &input, stride);
-        if (tripod_walk_enabled && tripod_walk_entry < 1 && leg == tripod_walk_excluded)
+        if (tripod_walk && tripod_walk_entry < 1 && leg == tripod_walk_excluded)
             world_feet[leg].y *= smootherstep(fmaxf(0, tripod_walk_entry*2-1));
         swing[leg] = gait_leg_scheduled_swing((robot_leg_t)leg, motion_active, use_static_crawl);
 
@@ -1613,10 +1678,10 @@ static void gait_tick(void)
         .roll=body_pose.roll_radians, .pitch=body_pose.pitch_radians};
     robot_balance_pose_t measured_pose;
     const bool swing_balance = armed && motion_active && !jumping && !tripod_active &&
-        (!tripod_walk_enabled || tripod_walk_entry >= 1) &&
+        (!tripod_walk || tripod_walk_entry >= 1) &&
         estimate_swing_body(&feedback, world_feet, swing, commanded_pose, &measured_pose);
     state.swing_balance_active = swing_balance;
-    state.tripod_walk_enabled = tripod_walk_enabled;
+    state.tripod_walk_enabled = tripod_walk;
     state.tripod_walk_excluded = tripod_walk_excluded;
     state.constrained_leg_mask = 0;
     for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
@@ -1687,7 +1752,7 @@ esp_err_t robot_gait_init(void)
     gait_mutex = xSemaphoreCreateMutex();
     if (!gait_mutex) return ESP_ERR_NO_MEM;
     memset(&state, 0, sizeof(state));
-    state.selected_gait = ROBOT_GAIT_CRAWL;
+    state.selected_gait = (robot_gait_mode_t)ROBOT_MODE_BALANCE;
     state.active_gait = ROBOT_GAIT_CRAWL;
     for (int gait = ROBOT_GAIT_TROT; gait <= ROBOT_GAIT_CLIMB; ++gait)
         gait_profiles[gait] = robot_locomotion_default_profile((uint8_t)gait);
@@ -1906,6 +1971,13 @@ esp_err_t robot_gait_arm(void)
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
         xSemaphoreGive(gait_mutex);
     }
+    // Every arm starts at the saved height and a level torso.
+    if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    height_offset_mm = 0;
+    joint_trajectory_reset(&height_trajectory, body_height);
+    joint_trajectory_reset(&pose_trajectory[0], 0.0f);
+    joint_trajectory_reset(&pose_trajectory[1], 0.0f);
+    xSemaphoreGive(gait_mutex);
     last_arm_preflight_slot = 0xff;
     const esp_err_t result = robot_control_arm();
     if (result != ESP_OK && attitude_control.enabled &&
@@ -2238,7 +2310,6 @@ esp_err_t robot_gait_set_tripod_walk(bool enabled, robot_leg_t excluded)
     if (result == ESP_OK) {
         tripod_walk_enabled = enabled; tripod_walk_excluded = excluded;
         tripod_walk_entry = 0; phase = 0;
-        state.selected_gait = enabled ? ROBOT_GAIT_TRIPOD : ROBOT_GAIT_CRAWL;
         state.tripod_walk_enabled = enabled; state.tripod_walk_excluded = excluded;
     }
     xSemaphoreGive(gait_mutex);

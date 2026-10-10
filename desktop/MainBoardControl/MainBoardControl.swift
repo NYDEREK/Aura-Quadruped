@@ -358,18 +358,30 @@ struct ServoView: View {
 }
 
 struct LEDsView: View {
+    @EnvironmentObject var aura: AuraConnection
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Sygnalizacja stanu • GPIO32").font(.title2.bold())
+            Text("Pasek LED • GPIO32").font(.title2.bold())
+            HStack {
+                Text("Jasność")
+                Slider(value: $aura.ledBrightness, in: 0...100, step: 5) { editing in
+                    if !editing { aura.saveLEDBrightness() }
+                }
+                Text("\(Int(aura.ledBrightness)) %").monospacedDigit().frame(width: 50, alignment: .trailing)
+            }
+            .disabled(!aura.isConnected)
+            .frame(maxWidth: 420)
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
-                GridRow { Text("Rozbrojony"); Text("pomarańczowy") }
-                GridRow { Text("Kalibracja"); Text("czerwony") }
-                GridRow { Text("Uzbrojony"); Text("zielony") }
-                GridRow { Text("Awaria bezpieczeństwa"); Text("czerwony migający") }
+                GridRow { Text("Dioda 1"); Text("stan: pomarańczowy rozbrojony, zielony uzbrojony, czerwony kalibracja, miga przy blokadzie") }
+                GridRow { Text("Dioda 2"); Text("tryb: 1 niebieski, 2 turkusowy, 3 fioletowy, 4 żółty, 5 różowy") }
+                GridRow { Text("Diody 3–8"); Text("bateria 10,0–12,6 V: zielony, pomarańczowy poniżej 11,0 V, czerwony przy 10,0 V") }
             }.foregroundStyle(.secondary)
-            Text("Pasek robota i lightbar pada pokazują ten sam stan. Aura odświeża kolor okresowo, więc test ręcznego koloru ani ponowne połączenie pada nie zostawią starego koloru.").foregroundStyle(.secondary)
+            Text("Jasność dotyczy tylko paska robota i jest zapisywana w Aurze. Lightbar pada pokazuje ten sam stan co dioda 1.").foregroundStyle(.secondary)
             Spacer()
-        }.padding()
+        }
+        .padding()
+        .onAppear { if aura.isConnected { aura.readLEDBrightness() } }
     }
 }
 

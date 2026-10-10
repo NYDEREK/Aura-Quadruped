@@ -23,6 +23,7 @@
 #include "robot_control.h"
 #include "robot_gait.h"
 #include "servo_bus.h"
+#include "status_led.h"
 #include "tof.h"
 #include "ws2812.h"
 
@@ -39,7 +40,7 @@
 #define AURA_MPU6050_EXCLUSIVE_TEST 0
 
 static esp_err_t radio_nvs_status = ESP_ERR_INVALID_STATE;
-// The fitted strip has 8 pixels: 0 = robot state, 1 = selected gait,
+// The fitted strip has 8 pixels: 0 = robot state, 1 = pad mode,
 // 2...7 = battery bar. The frame keeps the driver's 64-pixel length so any
 // pixel past the eighth (a longer strip, or one still lit by older firmware)
 // is held dark.
@@ -59,9 +60,9 @@ static const state_colour_t colour_orange = {.red = 255, .green = 96, .blue = 0}
 static const state_colour_t colour_green = {.red = 0, .green = 255, .blue = 0};
 static const state_colour_t colour_off = {0};
 
-// Selected gait (R1): stand, trot, crawl, run, climb, three-leg walk.
+// Pad mode (D-pad): 1 balance, 2 torso pose, 3 walk, 4 and 5 stand.
 static const state_colour_t gait_colours[] = {
-    {.red = 255, .green = 255, .blue = 255},  // white
+    {0},                                      // no mode 0
     {.red = 0, .green = 0, .blue = 255},      // blue
     {.red = 0, .green = 255, .blue = 255},    // turquoise
     {.red = 160, .green = 0, .blue = 255},    // purple
@@ -69,11 +70,12 @@ static const state_colour_t gait_colours[] = {
     {.red = 255, .green = 0, .blue = 120},    // pink
 };
 
-static void put_pixel(uint8_t *strip, size_t pixel, state_colour_t colour)
+// Colours are full-scale; the saved brightness scales the whole strip.
+static void put_pixel(uint8_t *strip, size_t pixel, state_colour_t colour, unsigned percent)
 {
-    strip[pixel * 3] = colour.red;
-    strip[pixel * 3 + 1] = colour.green;
-    strip[pixel * 3 + 2] = colour.blue;
+    strip[pixel * 3] = (uint8_t)((colour.red * percent + 50U) / 100U);
+    strip[pixel * 3 + 1] = (uint8_t)((colour.green * percent + 50U) / 100U);
+    strip[pixel * 3 + 2] = (uint8_t)((colour.blue * percent + 50U) / 100U);
 }
 
 // The strip and DualSense lightbar are an authoritative robot-state
@@ -98,22 +100,24 @@ static void state_indicator_task(void *argument)
             : armed ? colour_green                    // armed
                     : colour_orange;                  // disarmed
         const bool show_gait = !safety_fault && !gait.calibration_test &&
+                               gait.selected_gait > 0 &&
                                (unsigned)gait.selected_gait <
                                    sizeof(gait_colours) / sizeof(gait_colours[0]);
         app_state_snapshot_t app;
         app_state_get(&app);
+        const unsigned percent = status_led_brightness();
         memset(strip, 0, sizeof(strip));
-        put_pixel(strip, STATE_PIXEL, current);
-        if (show_gait) put_pixel(strip, GAIT_PIXEL, gait_colours[gait.selected_gait]);
+        put_pixel(strip, STATE_PIXEL, current, percent);
+        if (show_gait) put_pixel(strip, GAIT_PIXEL, gait_colours[gait.selected_gait], percent);
         if (app.battery.valid) {
             const state_colour_t bar = app.battery.level == BATTERY_LEVEL_OK ? colour_green
                 : app.battery.level == BATTERY_LEVEL_LOW ? colour_orange : colour_red;
             for (size_t pixel = 0; pixel < app.battery.bar_pixels; ++pixel)
-                put_pixel(strip, BATTERY_FIRST_PIXEL + pixel, bar);
+                put_pixel(strip, BATTERY_FIRST_PIXEL + pixel, bar, percent);
         }
         (void)ws2812_write_rgb(strip, STATE_INDICATOR_PIXEL_COUNT);
         // Sony's centred patterns show 0...5 white dots independently of RGB.
-        // Count = selected mode: stand, trot, crawl, run, climb, three-leg walk.
+        // Count = pad mode 1...5.
         static const uint8_t gait_dots[] = {0x00, 0x04, 0x0a, 0x15, 0x1b, 0x1f};
         const uint8_t players = show_gait && (unsigned)gait.selected_gait < sizeof(gait_dots)
             ? gait_dots[gait.selected_gait] : 0;
@@ -150,6 +154,7 @@ static void print_help(void)
            "  servo ping <id>   - ping one ST3215 ID (0..253)\n"
            "  servo read <id>   - read feedback registers 56..70\n"
            "  robot arm|disarm  - torque all configured robot axes on or off\n"
+           "  led <0-100>       - status strip brightness in %%, saved\n"
            "  gait virtual off  - return gait input to the paired pad\n"
            "  gait virtual F [L T H] - virtual sticks, each -1000..1000\n"
            "  tof retry         - detect both VL53L4CD sensors again\n"
@@ -335,6 +340,15 @@ static void execute_command(char *line)
     else if (!strcmp(line, "robot disarm"))
         printf("Robot disarm: %s\n", esp_err_to_name(robot_control_disarm()));
     else if (!strncmp(line, "gait virtual ", 13)) gait_virtual_command(line + 13);
+    else if (!strncmp(line, "led ", 4)) {
+        char *end = NULL;
+        const long percent = strtol(line + 4, &end, 10);
+        if (end == line + 4 || *end || percent < 0 || percent > 100)
+            printf("Use: led <0-100>\n");
+        else
+            printf("LED brightness %ld %%: %s\n", percent,
+                   esp_err_to_name(status_led_set_brightness((uint8_t)percent)));
+    }
     else if (!strncmp(line, "servo ping ", 11)) servo_command(false, line + 11);
     else if (!strncmp(line, "servo read ", 11)) servo_command(true, line + 11);
     else if (!strcmp(line, "imu retry")) {
@@ -503,6 +517,7 @@ void app_main(void)
     // Robot configuration is persisted in NVS, so NVS must be online before
     // robot_control_init() tries to load the saved axis map.
     radio_nvs_status = init_calibration_nvs();
+    if (radio_nvs_status == ESP_OK) status_led_init();
 
     printf("\nAura Main Board firmware: ST3215, INA226, MPU6050 on S1, VL53L4CD and WS2812.\n");
     printf("Console UART: %s. Wi-Fi telemetry and Classic Bluetooth HID.\n",
