@@ -41,6 +41,14 @@ void app_state_set_power(const power_sample_t *sample)
     xSemaphoreGive(mutex);
 }
 
+void app_state_set_battery(const battery_gauge_t *gauge)
+{
+    if (!gauge) return;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    state.battery = *gauge;
+    xSemaphoreGive(mutex);
+}
+
 void app_state_get(app_state_snapshot_t *snapshot)
 {
     if (!snapshot) return;

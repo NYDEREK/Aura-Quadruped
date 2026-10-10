@@ -35,7 +35,7 @@ Firmware and a native macOS application for the ESP32-WROOM-32E-N8 board in `SCH
 | VL53L4CD I2C, S2 | SDA 25, SCL 26; XSHUT 15 | Distance and signal telemetry; automatic address `0x31` |
 | VIN ADC | GPIO34 / ADC1 channel 6 | Fitted 100k/22k divider |
 | ST3215 TTL | RX 16, TX 17, direction 18 | 1 Mbit/s; starts in receive/high-impedance mode and sends nothing automatically |
-| WS2812 data | GPIO32 | Up to 64 GRB pixels, solid/rainbow/off test |
+| WS2812 data | GPIO32 | 8-pixel status strip: state, selected gait, 6-pixel battery bar (10.0–12.6 V); see `docs/wifi-hid.md` |
 | Wi-Fi | TCP `aura-main-board.local:4242` | Aura desktop telemetry and configuration while external VIN is present |
 | Bluetooth Classic HID | DualSense | ESP32 is HID host for the saved controller; it does not carry desktop telemetry |
 | USB console | UART0 GPIO1/GPIO3 | 115200, 8N1 |

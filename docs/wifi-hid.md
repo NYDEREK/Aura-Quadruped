@@ -42,18 +42,36 @@ oddzielnych kolorów lewej i prawej strony. Układ raportu pochodzi z
 [hid-playstation.c](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c),
 `dualsense_output_report_common` i flag LIGHTBAR/PLAYER_INDICATOR.
 
-Bar i pasek robota nadal wskazują stan: pomarańczowy — rozbrojony,
+Lightbar i dioda 1 paska wskazują stan: pomarańczowy — rozbrojony,
 zielony — uzbrojony, czerwony — test kalibracyjny, migający czerwony —
-zatrzaśnięty błąd. Liczba białych kropek wskazuje **wybrany** profil:
+zatrzaśnięty błąd. Liczba białych kropek pada i kolor diody 2 paska
+wskazują **wybrany** profil:
 
-| Kropki | Tryb |
-|---:|---|
-| 0 | Stanie |
-| 1 | Trot |
-| 2 | Krok 1× |
-| 3 | Run |
-| 4 | Climb |
-| 5 | Chodzenie na 3 łapach |
+| Kropki | Dioda 2 | Tryb |
+|---:|---|---|
+| 0 | biała | Stanie |
+| 1 | niebieska | Trot |
+| 2 | turkusowa | Krok 1× |
+| 3 | fioletowa | Run |
+| 4 | żółta | Climb |
+| 5 | różowa | Chodzenie na 3 łapach |
+
+## Pasek LED (8 diod)
+
+| Dioda | Znaczenie |
+|---|---|
+| 1 | Stan robota (jak lightbar) |
+| 2 | Wybrany tryb (tabela wyżej); zgaszona przy błędzie i kalibracji |
+| 3–8 | Bateria 3S: 10,0 V = 0 %, 12,6 V = 100 %, każda dioda to 1/6 zakresu |
+
+Kolor paska baterii: zielony od 11,0 V, pomarańczowy poniżej 11,0 V,
+czerwony przy ≤ 10,0 V. Przy ≤ 10,0 V świeci jedna czerwona dioda i Aura
+odmawia uzbrojenia (`ESP_ERR_NOT_ALLOWED`, 0x10D) — z pada, aplikacji i
+UART. Napięcie pochodzi z INA226 (VBUS = VIN; ADC dzielnika tylko awaryjnie),
+jest filtrowane przez 2 s, a próg w górę ma histerezę 50 mV, więc pasek nie
+miga pod obciążeniem chodu. Bez żadnego odczytu napięcia diody baterii są
+zgaszone, a uzbrojenie jest zablokowane. Robot już uzbrojony nie jest
+rozbrajany automatycznie przy spadku napięcia.
 
 Kontrolki używają wycentrowanych wzorów Sony: 0x00, 0x04, 0x0a, 0x15,
 0x1b, 0x1f. Błąd i test kalibracji wygaszają kropki. W trybie Stanie

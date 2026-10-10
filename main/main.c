@@ -39,13 +39,42 @@
 #define AURA_MPU6050_EXCLUSIVE_TEST 0
 
 static esp_err_t radio_nvs_status = ESP_ERR_INVALID_STATE;
+// The fitted strip has 8 pixels: 0 = robot state, 1 = selected gait,
+// 2...7 = battery bar. The frame keeps the driver's 64-pixel length so any
+// pixel past the eighth (a longer strip, or one still lit by older firmware)
+// is held dark.
 #define STATE_INDICATOR_PIXEL_COUNT 64
+#define STATE_PIXEL 0
+#define GAIT_PIXEL 1
+#define BATTERY_FIRST_PIXEL 2
 
 typedef struct {
     uint8_t red;
     uint8_t green;
     uint8_t blue;
 } state_colour_t;
+
+static const state_colour_t colour_red = {.red = 255, .green = 0, .blue = 0};
+static const state_colour_t colour_orange = {.red = 255, .green = 96, .blue = 0};
+static const state_colour_t colour_green = {.red = 0, .green = 255, .blue = 0};
+static const state_colour_t colour_off = {0};
+
+// Selected gait (R1): stand, trot, crawl, run, climb, three-leg walk.
+static const state_colour_t gait_colours[] = {
+    {.red = 255, .green = 255, .blue = 255},  // white
+    {.red = 0, .green = 0, .blue = 255},      // blue
+    {.red = 0, .green = 255, .blue = 255},    // turquoise
+    {.red = 160, .green = 0, .blue = 255},    // purple
+    {.red = 255, .green = 200, .blue = 0},    // yellow
+    {.red = 255, .green = 0, .blue = 120},    // pink
+};
+
+static void put_pixel(uint8_t *strip, size_t pixel, state_colour_t colour)
+{
+    strip[pixel * 3] = colour.red;
+    strip[pixel * 3 + 1] = colour.green;
+    strip[pixel * 3 + 2] = colour.blue;
+}
 
 // The strip and DualSense lightbar are an authoritative robot-state
 // indicator. Reassert them so a manual LED test or a pad reconnect cannot
@@ -64,23 +93,29 @@ static void state_indicator_task(void *argument)
         // colours. The board strip and the DualSense lightbar share this exact
         // blinking signal until the operator clears the latch while disarmed.
         const state_colour_t current = safety_fault
-            ? (red_phase ? (state_colour_t){.red = 255, .green = 0, .blue = 0}
-                         : (state_colour_t){.red = 0, .green = 0, .blue = 0})
-            : gait.calibration_test
-                ? (state_colour_t){.red = 255, .green = 0, .blue = 0}       // calibration
-                : armed ? (state_colour_t){.red = 0, .green = 255, .blue = 0} // armed
-                        : (state_colour_t){.red = 255, .green = 96, .blue = 0}; // disarmed
-        for (size_t pixel = 0; pixel < STATE_INDICATOR_PIXEL_COUNT; ++pixel) {
-            strip[pixel * 3] = current.red;
-            strip[pixel * 3 + 1] = current.green;
-            strip[pixel * 3 + 2] = current.blue;
+            ? (red_phase ? colour_red : colour_off)
+            : gait.calibration_test ? colour_red      // calibration
+            : armed ? colour_green                    // armed
+                    : colour_orange;                  // disarmed
+        const bool show_gait = !safety_fault && !gait.calibration_test &&
+                               (unsigned)gait.selected_gait <
+                                   sizeof(gait_colours) / sizeof(gait_colours[0]);
+        app_state_snapshot_t app;
+        app_state_get(&app);
+        memset(strip, 0, sizeof(strip));
+        put_pixel(strip, STATE_PIXEL, current);
+        if (show_gait) put_pixel(strip, GAIT_PIXEL, gait_colours[gait.selected_gait]);
+        if (app.battery.valid) {
+            const state_colour_t bar = app.battery.level == BATTERY_LEVEL_OK ? colour_green
+                : app.battery.level == BATTERY_LEVEL_LOW ? colour_orange : colour_red;
+            for (size_t pixel = 0; pixel < app.battery.bar_pixels; ++pixel)
+                put_pixel(strip, BATTERY_FIRST_PIXEL + pixel, bar);
         }
         (void)ws2812_write_rgb(strip, STATE_INDICATOR_PIXEL_COUNT);
         // Sony's centred patterns show 0...5 white dots independently of RGB.
         // Count = selected mode: stand, trot, crawl, run, climb, three-leg walk.
         static const uint8_t gait_dots[] = {0x00, 0x04, 0x0a, 0x15, 0x1b, 0x1f};
-        const uint8_t players = !safety_fault && !gait.calibration_test &&
-                                (unsigned)gait.selected_gait < sizeof(gait_dots)
+        const uint8_t players = show_gait && (unsigned)gait.selected_gait < sizeof(gait_dots)
             ? gait_dots[gait.selected_gait] : 0;
         dualsense_set_indicators(current.red, current.green, current.blue, players);
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -384,6 +419,7 @@ static void vin_radio_guard_task(void *argument)
     TickType_t wake = xTaskGetTickCount();
     TickType_t next_start_attempt = 0;
     unsigned present_samples = 0;
+    battery_gauge_t battery = {0};
 
     while (true) {
         float vin = 0.0f;
@@ -425,6 +461,13 @@ static void vin_radio_guard_task(void *argument)
         power_sample_t power;
         power_read(&power);
         app_state_set_power(&power);
+        // INA226 VBUS sits directly on VIN and is far more accurate than the
+        // ESP32 ADC divider (which reads ~0.2 V high); the ADC is a fallback.
+        const bool ina_ok = power.ina_error == ESP_OK;
+        const bool measured = ina_ok || power.battery_error == ESP_OK;
+        battery_gauge_update(&battery, measured, ina_ok ? power.bus_v : power.battery_v,
+                             VIN_MONITOR_PERIOD_MS * 0.001f);
+        app_state_set_battery(&battery);
         xTaskDelayUntil(&wake, pdMS_TO_TICKS(VIN_MONITOR_PERIOD_MS));
     }
 }

@@ -1857,6 +1857,15 @@ esp_err_t robot_gait_arm(void)
     if (!gait_mutex) return ESP_ERR_INVALID_STATE;
     if (robot_control_is_armed()) return ESP_OK;
     if (robot_control_calibration_is_active()) return ESP_ERR_INVALID_STATE;
+    // The strip shows the same gauge: a short red bar means 0 % (<= 10.0 V)
+    // and Aura stays disarmed. An unmeasured pack is refused as well.
+    app_state_snapshot_t app = {0};
+    app_state_get(&app);
+    if (!battery_gauge_allows_arming(&app.battery)) {
+        ESP_LOGE("robot_gait", "arm rejected: battery %.2f V is at or below %.1f V",
+                 app.battery.voltage_v, BATTERY_EMPTY_V);
+        return ESP_ERR_NOT_ALLOWED;
+    }
     if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
     const float body_height = (float)nominal_body_height_mm;
     xSemaphoreGive(gait_mutex);

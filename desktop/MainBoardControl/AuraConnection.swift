@@ -1393,6 +1393,8 @@ final class AuraConnection: NSObject, ObservableObject {
                         let leg = ["LF", "RF", "LR", "RR"][Int(data[6]) / 3]
                         let axis = ["Ab/ad", "Hip", "Knee"][Int(data[6]) % 3]
                         message = "Aura nie uzbroiła robota: \(leg) / \(axis) nie mieści się w zapisanych krańcach pozycji stania. Sprawdź i ponownie zapisz krańce tej osi."
+                    } else if result == 0x10d {
+                        message = String(format: "Aura nie uzbroiła serw: bateria ma %.2f V, a 10,0 V to 0 %%. Naładuj baterię.", power.servoBusVoltage)
                     } else if result == 0x103 {
                         message = "Aura pozostaje w trybie kalibracji. W zakładce Calibration wyłącz podgląd TTL i rozbrój każdą nogę, a potem ponownie naciśnij Create."
                     } else {
