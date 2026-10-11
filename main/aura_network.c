@@ -60,6 +60,32 @@ void aura_network_send(uint8_t channel, const uint8_t *data, size_t size)
     }
     xSemaphoreGive(socket_lock);
 }
+void aura_network_batch_send(aura_network_batch_t *batch)
+{
+    if (!batch || !batch->used) return;
+    if (socket_lock) {
+        xSemaphoreTake(socket_lock, portMAX_DELAY);
+        if (running && has_ip && client >= 0) {
+            // Same rule as single frames: a partial write would break the
+            // framing, so a stalled reader is dropped and reconnects.
+            int sent = send(client, batch->data, batch->used, MSG_DONTWAIT);
+            if (sent != (int)batch->used) close_client();
+        }
+        xSemaphoreGive(socket_lock);
+    }
+    batch->used = 0;
+}
+
+void aura_network_batch_add(aura_network_batch_t *batch, uint8_t channel, const uint8_t *data, size_t size)
+{
+    if (!batch || !size || size > 20) return;
+    if (batch->used + size + 2 > sizeof(batch->data)) aura_network_batch_send(batch);
+    batch->data[batch->used] = channel;
+    batch->data[batch->used + 1] = (uint8_t)size;
+    memcpy(batch->data + batch->used + 2, data, size);
+    batch->used += size + 2;
+}
+
 static void network_task(void *arg)
 {
     int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
@@ -109,6 +135,12 @@ static void network_task(void *arg)
         if (selected <= 0) continue;
         if (fd < 0) {
             int accepted = accept(listener, NULL, NULL);
+            if (accepted >= 0) {
+                // Each telemetry cycle is one write; send it at once instead
+                // of letting Nagle hold it for the previous ACK.
+                int one = 1;
+                setsockopt(accepted, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            }
             xSemaphoreTake(socket_lock, portMAX_DELAY);
             if (running) client = accepted; else if (accepted >= 0) close(accepted);
             xSemaphoreGive(socket_lock);

@@ -1187,59 +1187,62 @@ static void telemetry_task(void *argument)
 {
     (void)argument;
     unsigned tick = 0;
+    // The whole cycle leaves as one TCP write (~16 frames, ~350 bytes).
+    static aura_network_batch_t telemetry_batch;
     while (!shutdown_requested) {
         if (aura_network_connected()) {
             uint8_t frame[AURA_FRAME_SIZE];
             // 50 Hz telemetry keeps the desktop simulation and current trace
-            // in step with live controls. Each frame is only 22 bytes on TCP,
-            // and MSG_DONTWAIT drops a stalled desktop client instead of
-            // accumulating latency on the shared Wi-Fi / Bluetooth radio.
+            // in step with live controls. A cycle's frames (22 bytes each)
+            // leave as one TCP write, and MSG_DONTWAIT drops a stalled
+            // desktop client instead of accumulating latency on the shared
+            // Wi-Fi / Bluetooth radio.
             make_power_frame(frame);
             memcpy(last_power, frame, sizeof(last_power));
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_tof_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_dualsense_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_imu_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_attitude_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_contact_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_safety_fault_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_status_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_pose_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_body_reference_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_estimate_frame(frame);
-            notify(telemetry_handle, frame, sizeof(frame), true);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             // Board-owned profiles synchronize independently of the 50 Hz
             // controller. The desktop never feeds targets back to Aura.
             if (tick % 50 == 0) {
                 for (int gait = ROBOT_GAIT_TROT; gait <= ROBOT_GAIT_TRIPOD; ++gait) {
                     make_robot_gait_profile_frame(frame, (robot_gait_mode_t)gait);
-                    notify(telemetry_handle, frame, sizeof(frame), true);
+                    aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
                 }
                 make_robot_motion_tuning_frame(frame);
-                notify(telemetry_handle, frame, sizeof(frame), true);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
             // All twelve commanded and measured axis states reach the desktop
             // every control period. The board remains the sole source of them.
             for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
                 make_robot_leg_frame(frame, (robot_leg_t)leg);
-                notify(telemetry_handle, frame, sizeof(frame), true);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
             if (tick % 10 == 0) {
                 make_servo_capacity_frame(frame);
-                notify(telemetry_handle, frame, sizeof(frame), true);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
             if (tick % 50 == 0) {
                 make_tof_diagnostics_frame(frame);
-                notify(telemetry_handle, frame, sizeof(frame), true);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
                 send_dualsense_status();
                 // Device discoveries are useful only while an inquiry is
                 // running.  Re-sending the complete unchanged list while the
@@ -1249,6 +1252,7 @@ static void telemetry_task(void *argument)
                 if (controller.state == DUALSENSE_STATE_SCANNING)
                     send_dualsense_devices();
             }
+            aura_network_batch_send(&telemetry_batch);
             ++tick;
         }
         vTaskDelay(pdMS_TO_TICKS(20));

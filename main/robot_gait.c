@@ -50,18 +50,24 @@
 #define ROBOT_POSE_MAX_PITCH_RAD (15.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_SLEW_RAD_S (40.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_ACCEL_RAD_S2 (200.0f * ROBOT_PI / 180.0f)
-// Pad mode 4: balanced trot (docs/balans-chodu.md). 0.20 s on two feet per
-// step, short enough for foot placement to catch the fall (a LIPM time
-// constant is ~0.15 s). The saved Trot profile stays in NVS but is not used.
-#define ROBOT_TROT_STRIDE_MM 40
-#define ROBOT_TROT_LIFT_MM 30
-#define ROBOT_TROT_FREQUENCY_CENTI_HZ 150
-#define ROBOT_TROT_DUTY_PERCENT 70
-// A 0.2 s swing needs ~130 rad/s^2 at the joints. ST3215 ACC 254 caps the
-// servo at 39 rad/s^2, so mode 4 sends ACC 0 (the factory "no ramp") and the
-// planner shapes the motion instead.
-#define ROBOT_TROT_SERVO_ACCELERATION 0
-#define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 120.0f
+// Pad mode 4: balanced trot (docs/balans-chodu.md). Its step is a copy of
+// the operator's tested mode 3 (Run) profile as saved in NVS on 2026-10-11:
+// 44 mm / 41 mm / 1.00 Hz / 52 %. A copy, not a link: editing mode 3 in the
+// app does not change mode 4. The saved Trot profile stays in NVS unused.
+#define ROBOT_TROT_STRIDE_MM 44
+#define ROBOT_TROT_LIFT_MM 41
+#define ROBOT_TROT_FREQUENCY_CENTI_HZ 100
+#define ROBOT_TROT_DUTY_PERCENT 52
+// Mode 4 starts and stops only on a tick with all four feet down. That window
+// is (duty - 50 %) of a cycle and must hold at least one 20 ms tick, or the
+// trot can miss it every half-cycle and never stop (1.25 Hz at 52 % does).
+_Static_assert((ROBOT_TROT_DUTY_PERCENT - 50) * 1000 >=
+                   ROBOT_TROT_FREQUENCY_CENTI_HZ * ROBOT_GAIT_PERIOD_MS,
+               "mode 4 four-feet-down window shorter than one gait tick");
+// With mode 3's timing the joints are driven as in mode 3 as well. (ACC 0
+// and 120 rad/s^2 belonged to the former 0.2 s swing.)
+#define ROBOT_TROT_SERVO_ACCELERATION ROBOT_GAIT_ACCELERATION
+#define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 ROBOT_JOINT_MAX_ACCELERATION_RAD_S2
 #define ROBOT_TROT_COMMAND_TIME_S 0.25f
 #define ROBOT_TROT_STOP_COMMAND 0.05f
 #define ROBOT_TROT_COM_LEARN_RATE 0.05f
