@@ -216,7 +216,7 @@ private struct ModeTable: View {
     }
 }
 
-// The armed 25 Hz trace thinned to about 800 points for drawing. The joint
+// The armed 25 Hz trace thinned to about 500 points for drawing. The joint
 // error keeps the worst value of each thinned window so short spikes stay.
 struct TracePlot {
     struct Band: Identifiable { let id: Int; let mode: Int; let start: Double; let end: Double }
@@ -240,7 +240,7 @@ struct TracePlot {
                 start = i
             }
         }
-        let step = max(1, count / 800)
+        let step = max(1, count / 500)
         var currentSegment = 0
         for i in stride(from: 0, to: count, by: step) {
             if let last = t.last, trace.t[i] - last > 0.3 + Double(step) * 0.06 { currentSegment += 1 }

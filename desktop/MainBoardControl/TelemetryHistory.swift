@@ -78,14 +78,28 @@ final class TelemetryHistory: ObservableObject {
 
     // Chronological samples of the last `seconds`, thinned to about
     // `maximumPoints` so a chart stays cheap whatever the window.
+    // Reads the ring in place: the full buffer is never copied, only the
+    // thinned samples are.
     func window(seconds: Double, maximumPoints: Int = 400) -> [TelemetrySample] {
-        guard !buffer.isEmpty else { return [] }
-        let ordered = buffer.count < Self.capacity ? buffer : Array(buffer[head...] + buffer[..<head])
-        let cutoff = (ordered.last?.time ?? 0) - seconds
-        let first = ordered.firstIndex { $0.time >= cutoff } ?? ordered.startIndex
-        let slice = ordered[first...]
-        let stride = max(1, slice.count / maximumPoints)
-        return stride == 1 ? Array(slice) : slice.enumerated().compactMap { $0.offset % stride == 0 ? $0.element : nil }
+        let count = buffer.count
+        guard count > 0 else { return [] }
+        let oldest = count < Self.capacity ? 0 : head
+        func time(_ i: Int) -> Double { buffer[(oldest + i) % count].time }
+        let cutoff = time(count - 1) - seconds
+        var low = 0, high = count - 1
+        while low < high {
+            let middle = (low + high) / 2
+            if time(middle) < cutoff { low = middle + 1 } else { high = middle }
+        }
+        let stride = max(1, (count - low) / maximumPoints)
+        var result: [TelemetrySample] = []
+        result.reserveCapacity((count - low) / stride + 1)
+        var i = low
+        while i < count {
+            result.append(buffer[(oldest + i) % count])
+            i += stride
+        }
+        return result
     }
 
     func csv() -> String {

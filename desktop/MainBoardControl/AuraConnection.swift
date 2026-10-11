@@ -240,8 +240,8 @@ struct AuraGaitProfile: Equatable, Identifiable {
 
     // Pad mode 4's fixed trot profile (ROBOT_TROT_* in main/robot_gait.c);
     // the Test IK preview uses it. Keep the two in step.
-    static let firmwareTrot = AuraGaitProfile(gait: 1, strideMm: 40, stepHeightMm: 30,
-                                              frequencyCentiHz: 150, dutyPercent: 70)
+    static let firmwareTrot = AuraGaitProfile(gait: 1, strideMm: 44, stepHeightMm: 41,
+                                              frequencyCentiHz: 100, dutyPercent: 52)
 
     static let defaults: [AuraGaitProfile] = [
         .init(gait: 1, strideMm: 80, stepHeightMm: 58, frequencyCentiHz: 140, dutyPercent: 58),

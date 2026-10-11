@@ -175,7 +175,11 @@ final class SessionLogger: ObservableObject {
     @Published private(set) var revision = 0
     @Published private(set) var sessions: [AuraSession] = []
     @Published var selection: UUID?
+    // `live` is what the Sessions view shows, published once a second;
+    // `current` is the session being recorded.
     @Published private(set) var live: AuraSession?
+    private var current: AuraSession?
+    private var lastPublished = Date.distantPast
     // The live trace stays out of `live` so 50 Hz appends never copy it.
     private(set) var liveTrace = AuraSessionTrace()
 
@@ -206,7 +210,7 @@ final class SessionLogger: ObservableObject {
     init() {
         loadAll()
         timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] now in
-            guard let self, self.live != nil else { return }
+            guard let self, self.current != nil else { return }
             if now.timeIntervalSince(self.lastFrame) > 5 { self.finish() }
             else if now.timeIntervalSince(self.lastSaved) > 30 { self.save() }
             self.revision &+= 1
@@ -220,8 +224,10 @@ final class SessionLogger: ObservableObject {
                 contacts: AuraFootContacts, legs: [AuraRobotLegTelemetry], route: RouteRecorder) {
         let now = Date()
         lastFrame = now
-        if live == nil {
-            live = AuraSession(start: now, end: now)
+        if current == nil {
+            current = AuraSession(start: now, end: now)
+            live = current
+            lastPublished = now
             energyStart = nil
             energyIntegral = 0
             lastPosition = nil
@@ -234,7 +240,7 @@ final class SessionLogger: ObservableObject {
             lastModePosition = nil
             previous = nil
         }
-        guard let start = live?.start else { return }
+        guard let start = current?.start else { return }
         frameCounter += 1
         let t = now.timeIntervalSince(start)
         let frameDt = lastFrameTime.map { min(0.1, max(0, t - $0)) } ?? 0
@@ -251,7 +257,7 @@ final class SessionLogger: ObservableObject {
                         legs: legs, power: power, moving: moving)
         }
 
-        guard frameCounter % 10 == 0, var session = live else { return }
+        guard frameCounter % 10 == 0, var session = current else { return }
         let dt = session.series.t.last.map { t - $0 } ?? 0
         let temperature = Double(legs.flatMap(\.temperature).max() ?? 0)
         let position = route.position
@@ -305,7 +311,11 @@ final class SessionLogger: ObservableObject {
         session.modes = modeStats.values.sorted { $0.mode < $1.mode }
         session.events = events
         session.end = now
-        live = session
+        current = session
+        if now.timeIntervalSince(lastPublished) >= 1 {
+            lastPublished = now
+            live = session
+        }
     }
 
     private func recordEvents(t: Double, state: AuraRobotState, moving: Bool, contacts: AuraFootContacts) {
@@ -458,7 +468,7 @@ final class SessionLogger: ObservableObject {
 
     // The trace of a session: the live one, or read from its file on demand.
     func trace(for session: AuraSession) -> AuraSessionTrace? {
-        if session.id == live?.id { return liveTrace }
+        if session.id == current?.id { return liveTrace }
         if let cachedTrace, cachedTrace.id == session.id { return cachedTrace.trace }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -470,15 +480,16 @@ final class SessionLogger: ObservableObject {
 
     // Ends the live session: kept if it lasted 15 s or more.
     func finish() {
-        guard let session = live else { return }
+        guard let session = current else { return }
         if session.summary.duration >= 15 { save() }
+        current = nil
         live = nil
         liveTrace = AuraSessionTrace()
         loadAll()
     }
 
     func save() {
-        guard var session = live else { return }
+        guard var session = current else { return }
         lastSaved = Date()
         session.trace = liveTrace.isEmpty ? nil : liveTrace
         write(session, to: Self.folder.appendingPathComponent(session.fileName))

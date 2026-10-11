@@ -22,6 +22,9 @@ struct TimeChart: View {
 
     var body: some View {
         let end = samples.last?.time ?? 0
+        // Plain number arrays: the chart never touches the full samples.
+        let times = samples.map { $0.time - end }
+        let lines = series.map { s in samples.map(s.value) }
         Panel(title, trailing: {
             HStack(spacing: 10) {
                 ForEach(series) { s in
@@ -37,13 +40,12 @@ struct TimeChart: View {
             }
         }) {
             Chart {
-                ForEach(series) { s in
-                    ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
-                        LineMark(x: .value("t", sample.time - end), y: .value(s.name, s.value(sample)),
-                                 series: .value("seria", s.name))
-                            .foregroundStyle(s.color)
+                ForEach(series.indices, id: \.self) { k in
+                    ForEach(times.indices, id: \.self) { i in
+                        LineMark(x: .value("t", times[i]), y: .value(series[k].name, lines[k][i]),
+                                 series: .value("series", series[k].name))
+                            .foregroundStyle(series[k].color)
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
-                            .interpolationMethod(.linear)
                     }
                 }
             }
@@ -150,7 +152,7 @@ struct ChartsView: View {
 
     var body: some View {
         let _ = history.revision
-        let samples = history.window(seconds: Double(window.rawValue), maximumPoints: 300)
+        let samples = history.window(seconds: Double(window.rawValue), maximumPoints: 200)
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 TextTabs(tabs: [(.power, "Power"), (.imu, "IMU"), (.servos, "Servos"), (.gait, "Gait")],
@@ -207,15 +209,13 @@ struct OverviewView: View {
     }
 
     var body: some View {
-        let _ = history.revision
-        let samples = history.window(seconds: 60, maximumPoints: 240)
         let state = aura.robotState
         let legs = aura.robotLegTelemetry
         let temperatures = legs.flatMap(\.temperature)
         let maxTemperature = temperatures.max() ?? 0
         let voltage = aura.power.servoBusVoltage
         Page {
-            if !aura.isConnected && samples.isEmpty {
+            if !aura.isConnected && history.count == 0 {
                 Placeholder(text: "Not connected to Aura").frame(height: 300)
             } else {
                 if state.safetyFault.latched {
@@ -245,18 +245,7 @@ struct OverviewView: View {
                     Stat(label: "Controller", value: aura.dualSense.isConnected ? aura.dualSense.battery.map { "\($0)%" } ?? "connected" : "none",
                          tint: aura.dualSense.isConnected ? Theme.text : Theme.muted)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
-                    TimeChart(title: "Voltage", unit: "V", samples: samples,
-                              series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }])
-                    TimeChart(title: "Servo current", unit: "A", samples: samples,
-                              series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f")
-                    TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
-                        Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
-                        Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f")
-                    TimeChart(title: "Servo temperature", unit: "°C", samples: samples, series: (0..<4).map { leg in
-                        Series(name: ChartSets.legs[leg], color: Theme.series[leg]) { legMax($0.servoTemperature, leg) } },
-                              format: "%.0f")
-                }
+                OverviewCharts()
                 Panel("Axes") {
                     Grid(alignment: .trailing, horizontalSpacing: 18, verticalSpacing: 5) {
                         GridRow {
@@ -293,6 +282,29 @@ struct OverviewView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// Overview's charts in their own view: it redraws with the history (4 Hz),
+// not with every 10 Hz state update of the page around it.
+private struct OverviewCharts: View {
+    @EnvironmentObject var history: TelemetryHistory
+
+    var body: some View {
+        let _ = history.revision
+        let samples = history.window(seconds: 60, maximumPoints: 150)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
+            TimeChart(title: "Voltage", unit: "V", samples: samples,
+                      series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }])
+            TimeChart(title: "Servo current", unit: "A", samples: samples,
+                      series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f")
+            TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
+                Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
+                Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f")
+            TimeChart(title: "Servo temperature", unit: "°C", samples: samples, series: (0..<4).map { leg in
+                Series(name: ChartSets.legs[leg], color: Theme.series[leg]) { legMax($0.servoTemperature, leg) } },
+                      format: "%.0f")
         }
     }
 }

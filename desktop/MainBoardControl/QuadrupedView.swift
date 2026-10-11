@@ -430,7 +430,8 @@ final class QuadrupedModel: ObservableObject {
     // Test IK: Aura's pad modes 1–4 as robot_gait.c runs them.
     // 1 stands (the IMU levelling has no equivalent here), 2 tilts the torso
     // ±15° from the left stick at 40°/s, 3 walks the saved Run profile,
-    // 4 trots with the firmware's fixed profile and a 0.25 s stick filter.
+    // 4 trots with the firmware's fixed copy of the mode 3 step and a 0.25 s
+    // stick filter.
     func ikLabPadSnapshot(at time: TimeInterval, mode: Int,
                           forward: Double, lateral: Double, turn: Double) -> QuadrupedSnapshot {
         let dt = min(0.05, max(0, time - (padModeTime ?? time)))
@@ -2151,7 +2152,7 @@ private struct IKLabPadTab: View {
         case 1: "Stands. On Aura the IMU keeps the torso level."
         case 2: "Left stick tilts the torso, ±15° at 40°/s."
         case 3: "Run profile as saved on Aura."
-        case 4: "Firmware trot · stick smoothed over 0.25 s."
+        case 4: "Mode 3 step with mode 4 balance · stick smoothed 0.25 s."
         default: ""
         }
     }

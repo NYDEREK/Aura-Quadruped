@@ -31,13 +31,34 @@ struct Metric: View {
     }
 }
 
+// Redraws with the history (4 Hz), not with every state update of the page.
+private struct IMUCharts: View {
+    @EnvironmentObject var history: TelemetryHistory
+
+    var body: some View {
+        let _ = history.revision
+        let samples = history.window(seconds: 30, maximumPoints: 150)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
+            TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
+                Series(name: "roll", color: Theme.accent) { $0.roll },
+                Series(name: "pitch", color: Theme.accent2Line) { $0.pitch }], format: "%+.1f")
+            TimeChart(title: "Gyroscope", unit: "°/s", samples: samples, series: [
+                Series(name: "x", color: Theme.red) { $0.gyro.x },
+                Series(name: "y", color: Theme.green) { $0.gyro.y },
+                Series(name: "z", color: Theme.blue) { $0.gyro.z }], format: "%+.1f")
+            TimeChart(title: "Acceleration", unit: "g", samples: samples, series: [
+                Series(name: "x", color: Theme.red) { $0.accel.x },
+                Series(name: "y", color: Theme.green) { $0.accel.y },
+                Series(name: "z", color: Theme.blue) { $0.accel.z }], format: "%+.2f")
+        }
+    }
+}
+
 struct IMUView: View {
     @EnvironmentObject var aura: AuraConnection
     @EnvironmentObject var history: TelemetryHistory
 
     var body: some View {
-        let _ = history.revision
-        let samples = history.window(seconds: 30, maximumPoints: 240)
         let attitude = aura.attitude
         let available = aura.power.imuAvailable
         Page {
@@ -89,19 +110,7 @@ struct IMUView: View {
                     }
                     .frame(width: 260)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
-                    TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
-                        Series(name: "roll", color: Theme.accent) { $0.roll },
-                        Series(name: "pitch", color: Theme.accent2Line) { $0.pitch }], format: "%+.1f")
-                    TimeChart(title: "Gyroscope", unit: "°/s", samples: samples, series: [
-                        Series(name: "x", color: Theme.red) { $0.gyro.x },
-                        Series(name: "y", color: Theme.green) { $0.gyro.y },
-                        Series(name: "z", color: Theme.blue) { $0.gyro.z }], format: "%+.1f")
-                    TimeChart(title: "Acceleration", unit: "g", samples: samples, series: [
-                        Series(name: "x", color: Theme.red) { $0.accel.x },
-                        Series(name: "y", color: Theme.green) { $0.accel.y },
-                        Series(name: "z", color: Theme.blue) { $0.accel.z }], format: "%+.2f")
-                }
+                IMUCharts()
             } else {
                 Text("SDA GPIO25 · SCL GPIO26 · DATA_RDY GPIO14").font(Theme.monoSmall).foregroundStyle(Theme.muted)
             }
