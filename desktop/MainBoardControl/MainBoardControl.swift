@@ -808,6 +808,14 @@ private struct StatusBar: View {
                 Button("×") { aura.message = "" }.buttonStyle(.plain).foregroundStyle(Theme.muted)
             }
             Spacer(minLength: 8)
+            if aura.isConnected && !aura.health.stalledTasks.isEmpty {
+                Text("stalled: " + aura.health.stalledTasks.joined(separator: ", "))
+                    .font(Theme.monoSmall).foregroundStyle(Theme.red).lineLimit(1)
+            }
+            if aura.isConnected && aura.health.resetAbnormal {
+                Text("last start: " + aura.health.resetText)
+                    .font(Theme.monoSmall).foregroundStyle(Theme.orange).lineLimit(1)
+            }
             if aura.isConnected {
                 Text(String(format: "up %.0f s", Double(aura.power.uptimeMilliseconds) / 1000))
                     .font(Theme.monoSmall).foregroundStyle(Theme.faint)

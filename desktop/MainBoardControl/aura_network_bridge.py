@@ -82,7 +82,12 @@ def main():
     listener.listen(1)
     while True:
         client, _ = listener.accept()
-        serve(client)
+        try:
+            serve(client)
+        except OSError:
+            # Aura restarted or the app went away mid-write. Keep listening;
+            # an exception here used to end the relay for good.
+            pass
 
 
 if __name__ == "__main__":

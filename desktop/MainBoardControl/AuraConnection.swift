@@ -421,6 +421,13 @@ final class AuraConnection: NSObject, ObservableObject {
     private var pendingIMU = AuraIMU()
     private var pendingAttitude = AuraAttitude()
     private var pendingFootContacts = AuraFootContacts()
+    private var pendingHealth = AuraHealth()
+    private var healthReference: (time: Double, beats: [Int])?
+    @Published private(set) var health = AuraHealth()
+    // Silence watchdog: a link that stays "connected" without data (Aura
+    // restarted or Wi-Fi dropped) is closed and opened again.
+    private var lastTelemetryUptime = 0.0
+    private var silenceTimer: Timer?
     private var pendingToFSensors = [AuraToFSensor(id: 0, address: 0x30), AuraToFSensor(id: 1, address: 0x31)]
     private var pendingDualSense = AuraDualSense()
     private var pendingChartPoint: CurrentPoint?
@@ -436,6 +443,16 @@ final class AuraConnection: NSObject, ObservableObject {
         super.init()
         startNetworkBridge()
         startScan()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isConnected, self.lastTelemetryUptime > 0 else { return }
+                let quiet = ProcessInfo.processInfo.systemUptime - self.lastTelemetryUptime
+                guard quiet > 3 else { return }
+                self.lastTelemetryUptime = 0
+                self.message = "No data from Aura for 3 s · reconnecting"
+                self.reconnect()
+            }
+        }
     }
 
     private func startNetworkBridge() {
@@ -474,6 +491,12 @@ final class AuraConnection: NSObject, ObservableObject {
         // macOS 26 can incorrectly mark an independently built desktop app
         // as "Local network prohibited". The bundled relay gives this app a
         // loopback-only path while keeping the firmware protocol unchanged.
+        // The relay can end (an old copy holding the port, or a crash); start
+        // a fresh one instead of falling back to the blocked direct path.
+        if networkBridge?.isRunning != true {
+            networkBridge = nil
+            startNetworkBridge()
+        }
         if networkBridge?.isRunning == true {
             connect(to: .hostPort(host: "127.0.0.1", port: Self.bridgePort))
             return
@@ -563,6 +586,8 @@ final class AuraConnection: NSObject, ObservableObject {
     }
 
     private func scheduleRetry() {
+        healthReference = nil
+        pendingHealth.rates = [Double](repeating: -1, count: AuraHealth.tasks.count)
         let interruptedZeroCapture = !calibrationZeroQueue.isEmpty || calibrationZeroInFlight != nil
         calibrationZeroConfigFallback?.cancel()
         calibrationZeroConfigFallback = nil
@@ -1206,8 +1231,28 @@ final class AuraConnection: NSObject, ObservableObject {
         Int32(bitPattern: u32(data, offset))
     }
 
+    // Counters wrap at 16 bits; rates are measured over at least one second.
+    private func applyHealthFrame(_ data: Data) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let beats = (0..<AuraHealth.tasks.count).map { Int(u16(data, 2 + $0 * 2)) }
+        pendingHealth.available = true
+        pendingHealth.resetReason = Int(data[1])
+        pendingHealth.beats = beats
+        if let reference = healthReference {
+            let elapsed = now - reference.time
+            guard elapsed >= 1 else { return }
+            // A board restart resets the counters; that one bogus jump reads as unknown.
+            pendingHealth.rates = zip(beats, reference.beats).map {
+                let rate = Double(($0 - $1 + 65536) % 65536) / elapsed
+                return rate > 2000 ? -1 : rate
+            }
+        }
+        healthReference = (now, beats)
+    }
+
     private func parseTelemetry(_ data: Data) {
         guard data.count == 20 else { return }
+        lastTelemetryUptime = ProcessInfo.processInfo.systemUptime
         if data[0] == 0x10 {
             let flags = data[18]
             let nextPower = AuraPower(
@@ -1321,6 +1366,8 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingRobotState.applyBodyFrame(data)
         } else if data[0] == 0x32 {
             pendingRobotState.applyEstimateFrame(data)
+        } else if data[0] == 0x33 {
+            applyHealthFrame(data)
         } else if data[0] == 0x2f || data[0] == 0x30 {
             // Aura reports its stored gait profiles and motion tuning on the
             // telemetry channel; the parser for them lives with the events.
@@ -1353,7 +1400,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 recordHistorySample()
                 route.ingest(state: pendingRobotState, imu: pendingIMU, attitude: pendingAttitude)
                 sessions.ingest(power: pendingPower, state: pendingRobotState, attitude: pendingAttitude,
-                                imu: pendingIMU, contacts: pendingFootContacts,
+                                imu: pendingIMU, contacts: pendingFootContacts, health: pendingHealth,
                                 legs: pendingRobotLegTelemetry, route: route)
 
                 let now = ProcessInfo.processInfo.systemUptime
@@ -1364,6 +1411,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 imu = pendingIMU
                 attitude = pendingAttitude
                 footContacts = pendingFootContacts
+                if health != pendingHealth { health = pendingHealth }
                 tofSensors = pendingToFSensors
                 dualSense = pendingDualSense
                 if let pendingChartPoint {

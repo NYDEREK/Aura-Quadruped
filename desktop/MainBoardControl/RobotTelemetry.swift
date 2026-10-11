@@ -65,6 +65,41 @@ struct AuraRobotState: Equatable {
 
 // Aura's on-board Kalman estimate (frame 0x32): IK frame, X forward at the
 // last re-zero, Y up, Z left; heading > 0 is a left turn.
+// Frame 0x33: why the board last restarted and how fast each of its tasks
+// is looping. A task at 0 Hz while telemetry still arrives has stopped.
+struct AuraHealth: Equatable {
+    static let tasks = ["Gait", "Servo control", "Servo feedback", "Pad", "Commands",
+                        "Network", "Telemetry", "Estimator", "Sensors"]
+    var available = false
+    var resetReason = 0
+    var beats = [Int](repeating: 0, count: tasks.count)
+    var rates = [Double](repeating: -1, count: tasks.count)   // loops per second, -1 = not measured yet
+
+    var resetText: String {
+        switch resetReason {
+        case 1: "power on"
+        case 2: "reset pin"
+        case 3: "software"
+        case 4: "crash (panic)"
+        case 5: "interrupt watchdog"
+        case 6: "task watchdog"
+        case 7: "watchdog"
+        case 8: "deep sleep"
+        case 9: "brownout"
+        case 10: "SDIO"
+        case 11: "USB"
+        case 12: "JTAG"
+        case 13: "eFuse"
+        case 14: "power glitch"
+        case 15: "CPU lockup"
+        default: "unknown"
+        }
+    }
+    var resetAbnormal: Bool { [4, 5, 6, 7, 9, 14, 15].contains(resetReason) }
+    func stalled(_ task: Int) -> Bool { rates.indices.contains(task) && rates[task] == 0 }
+    var stalledTasks: [String] { Self.tasks.indices.filter(stalled).map { Self.tasks[$0] } }
+}
+
 struct AuraEstimate: Equatable {
     var available = false          // the firmware sends frame 0x32
     var valid = false

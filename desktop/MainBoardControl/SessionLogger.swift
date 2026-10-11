@@ -80,7 +80,8 @@ struct AuraModeStats: Codable, Equatable, Identifiable {
 
 struct AuraSessionEvent: Codable, Equatable {
     var t: Double               // s since the session start
-    var kind: String            // armed, disarmed, mode, moving, stopped, fault, fault cleared, pad lost, pad connected
+    var kind: String            // start, board start/restart, armed, disarmed, mode, moving, stopped, fault,
+                                // fault cleared, pad lost, pad connected, task stalled/resumed
     var detail = ""
 }
 
@@ -198,7 +199,8 @@ final class SessionLogger: ObservableObject {
     private var events: [AuraSessionEvent] = []
     private var lastFrameTime: Double?
     private var lastModePosition: SIMD3<Double>?
-    private var previous: (armed: Bool, mode: Int, moving: Bool, fault: Bool, pad: Bool, earlyMask: UInt8)?
+    private var previous: (armed: Bool, mode: Int, moving: Bool, fault: Bool, pad: Bool, earlyMask: UInt8,
+                           stalled: Set<String>)?
 
     private var cachedTrace: (id: UUID, trace: AuraSessionTrace?)?
 
@@ -221,7 +223,8 @@ final class SessionLogger: ObservableObject {
 
     // One call per telemetry snapshot (10 Hz).
     func ingest(power: AuraPower, state: AuraRobotState, attitude: AuraAttitude, imu: AuraIMU,
-                contacts: AuraFootContacts, legs: [AuraRobotLegTelemetry], route: RouteRecorder) {
+                contacts: AuraFootContacts, health: AuraHealth, legs: [AuraRobotLegTelemetry],
+                route: RouteRecorder) {
         let now = Date()
         lastFrame = now
         if current == nil {
@@ -249,7 +252,7 @@ final class SessionLogger: ObservableObject {
         // log replaces them.
         accumulateMode(dt: frameDt, state: state, attitude: attitude, imu: imu, contacts: contacts,
                        legs: legs, power: power, route: route, moving: moving)
-        recordEvents(t: t, state: state, moving: moving, contacts: contacts)
+        recordEvents(t: t, state: state, moving: moving, contacts: contacts, health: health)
         if state.armed || state.safetyFault.latched {
             appendTrace(t: t, state: state, attitude: attitude, imu: imu, contacts: contacts,
                         legs: legs, power: power, moving: moving)
@@ -319,16 +322,30 @@ final class SessionLogger: ObservableObject {
         }
     }
 
-    private func recordEvents(t: Double, state: AuraRobotState, moving: Bool, contacts: AuraFootContacts) {
+    private func recordEvents(t: Double, state: AuraRobotState, moving: Bool, contacts: AuraFootContacts,
+                              health: AuraHealth) {
         let fault = state.safetyFault.latched
         let mode = state.selectedGait
+        let stalled = Set(health.stalledTasks)
         defer {
-            previous = (state.armed, mode, moving, fault, state.controllerConnected, contacts.earlyTouchdownMask)
+            previous = (state.armed, mode, moving, fault, state.controllerConnected, contacts.earlyTouchdownMask,
+                        stalled)
         }
         guard let previous else {
             events.append(AuraSessionEvent(t: t, kind: "start",
                                            detail: "mode \(mode) · \(state.armed ? "armed" : "disarmed")"))
+            // Why the board last started: a crash, watchdog or brownout shows here.
+            if health.available {
+                events.append(AuraSessionEvent(t: t, kind: health.resetAbnormal ? "board restart" : "board start",
+                                               detail: health.resetText))
+            }
             return
+        }
+        for task in stalled.subtracting(previous.stalled).sorted() {
+            events.append(AuraSessionEvent(t: t, kind: "task stalled", detail: task))
+        }
+        for task in previous.stalled.subtracting(stalled).sorted() {
+            events.append(AuraSessionEvent(t: t, kind: "task resumed", detail: task))
         }
         if state.armed != previous.armed {
             events.append(AuraSessionEvent(t: t, kind: state.armed ? "armed" : "disarmed", detail: "mode \(mode)"))

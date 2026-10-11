@@ -97,6 +97,7 @@ struct FirmwareView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            BoardHealthPanel()
             GroupBox("Aura firmware") {
                 VStack(alignment: .leading, spacing: 10) {
                     if let path = updater.projectPath {
@@ -156,6 +157,29 @@ struct FirmwareView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The ESP restarts and the servos disarm. Let the robot lie down or support it.")
+        }
+    }
+}
+
+// Why the board last started and how fast each of its tasks loops. A task at
+// 0 Hz while the rest keep running has stopped.
+private struct BoardHealthPanel: View {
+    @EnvironmentObject private var aura: AuraConnection
+
+    var body: some View {
+        let health = aura.health
+        GroupBox("Board health") {
+            VStack(alignment: .leading, spacing: 5) {
+                ValueRow(label: "Last start", value: health.available ? health.resetText : "—",
+                         tint: health.resetAbnormal ? Theme.orange : Theme.text)
+                ForEach(AuraHealth.tasks.indices, id: \.self) { task in
+                    let rate = health.rates[task]
+                    ValueRow(label: AuraHealth.tasks[task],
+                             value: !aura.isConnected || rate < 0 ? "—" : String(format: "%.0f Hz", rate),
+                             tint: rate == 0 ? Theme.red : Theme.text)
+                }
+            }
+            .frame(maxWidth: 360, alignment: .leading)
         }
     }
 }
