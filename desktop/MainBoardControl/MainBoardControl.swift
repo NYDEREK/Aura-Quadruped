@@ -102,8 +102,12 @@ struct IMUView: View {
                         }
                         .pickerStyle(.segmented)
                         .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
-                        ValueRow(label: "State", value: attitude.referencePending ? "capturing reference"
-                                 : attitude.active ? "active" : "off",
+                        ValueRow(label: "Level", value: attitude.levelStored ? "calibrated" : "not calibrated",
+                                 tint: attitude.levelStored ? Theme.text : Theme.orange)
+                        Button("Calibrate level") { aura.calibrateLevel() }
+                            .disabled(!aura.isConnected || aura.busy || !aura.robotState.armed)
+                            .help("Mode 1, armed, standing still on flat ground. Saved on Aura and used on every arm.")
+                        ValueRow(label: "State", value: attitude.active ? "active (mode 1)" : "off",
                                  tint: attitude.active ? Theme.green : Theme.muted)
                         ValueRow(label: "Samples", value: "\(aura.imu.sampleCount)")
                     }

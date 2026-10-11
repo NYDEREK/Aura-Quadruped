@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -107,6 +108,10 @@
 // old key is deliberately not migrated.
 #define ROBOT_GAIT_NVS_ATTITUDE_ENABLE_KEY "imu_bal3"
 #define ROBOT_GAIT_NVS_ATTITUDE_LIMIT_KEY "imu_lim_cd"
+// Level calibration: the IMU roll/pitch (cdeg) read while Aura stands armed
+// in its neutral stance on flat ground. Set once from the app; every arm then
+// uses it instead of capturing whatever pose the robot happens to stand in.
+#define ROBOT_GAIT_NVS_LEVEL_KEY "imu_level"
 // During a one-foot transfer the projected centre of mass must remain inside
 // the triangle formed by the other three feet. This is an edge-distance
 // margin, not an arbitrary fraction of a geometric centroid.
@@ -278,17 +283,18 @@ static struct {
     float correction_roll_radians;
     float correction_pitch_radians;
     int64_t last_fresh_us;   // last tick with a fresh IMU sample
+    bool level_stored;       // a level calibration is saved in NVS
+    float level_roll_radians;
+    float level_pitch_radians;
 } attitude_control = {
     .enabled = true,
 };
 // A late IMU sample (the shared I2C bus was busy) holds the correction
 // for this long instead of dropping it to zero, which was a kick.
 #define ROBOT_ATTITUDE_GRACE_US 250000
-// The IMU's roll runs opposite to the IK roll; its pitch matches. Verified on
-// Aura 2026-10-11 with the posture loop running for the first time: pitch
-// balanced, roll pushed the wrong way. Used by the posture loop and mode 4's
-// capture point. Mode 3's swing estimate keeps its own sign untouched.
-#define ROBOT_IMU_ROLL_SIGN (-1.0f)
+// Mode 4's IMU capture point is off: mode 4 is to get a convex MPC body plan
+// instead, and the operator wants balancing in mode 1 only.
+#define ROBOT_TROT_IMU_CAPTURE 0
 // The posture controller uses the same bounded-acceleration generator as a
 // joint command. A rate limiter alone changes velocity instantaneously when
 // IMU error changes, which appears as a kick at the foot during a gait.
@@ -1134,6 +1140,7 @@ static void update_attitude_controller(bool armed, bool moving, bool hold, bool 
     state.attitude_control_enabled = attitude_control.enabled;
     state.attitude_reference_valid = attitude_control.reference_valid;
     state.attitude_reference_pending = attitude_control.reference_pending;
+    state.attitude_level_stored = attitude_control.level_stored;
     state.attitude_roll_cdeg = fresh ? radians_to_cdeg_signed(measured.roll_radians) : 0;
     state.attitude_pitch_cdeg = fresh ? radians_to_cdeg_signed(measured.pitch_radians) : 0;
     state.attitude_reference_roll_cdeg = attitude_control.reference_valid
@@ -1147,9 +1154,8 @@ static void update_attitude_controller(bool armed, bool moving, bool hold, bool 
     const bool usable = armed && attitude_control.enabled &&
                         attitude_control.reference_valid && recent;
     if (usable && !correct) {
-        // Modes 3-5 run without the posture loop, as they were tuned; the
-        // reference stays for mode 4's capture point. A correction left from
-        // modes 1-2 glides back to zero.
+        // Modes 2-5 run without the posture loop, as they were tuned. A
+        // correction left from mode 1 glides back to zero.
         const joint_trajectory_limits_t glide = {
             .maximum_velocity = ROBOT_ATTITUDE_STANDING_SLEW_RAD_S,
             .maximum_acceleration = ROBOT_ATTITUDE_STANDING_ACCEL_RAD_S2,
@@ -1169,8 +1175,11 @@ static void update_attitude_controller(bool armed, bool moving, bool hold, bool 
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     } else {
-        const float roll_error = pose_roll + ROBOT_IMU_ROLL_SIGN *
-            wrap_radians(attitude_control.reference_roll_radians - measured.roll_radians);
+        // Signs verified on Aura 2026-10-11: with this form both axes are
+        // negative feedback (tilt/correction correlation -0.9); flipping roll
+        // made it tip over.
+        const float roll_error = wrap_radians(attitude_control.reference_roll_radians +
+                                              pose_roll - measured.roll_radians);
         const float pitch_error = wrap_radians(attitude_control.reference_pitch_radians +
                                                pose_pitch - measured.pitch_radians);
         // Keep a bounded corrective command even beyond the nominal
@@ -1186,7 +1195,7 @@ static void update_attitude_controller(bool armed, bool moving, bool hold, bool 
             // torque controller. The known-good standing controller is intact.
             const float kd = moving ? 0.08f : 0.0f;
             const float desired_roll = robot_balance_posture_target(roll_error,
-                ROBOT_IMU_ROLL_SIGN * measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
+                measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
             const float desired_pitch = robot_balance_posture_target(pitch_error,
                 measured.pitch_rate_rad_s, proportional_gain, kd, correction_limit);
             const joint_trajectory_limits_t posture_limits = {
@@ -1597,17 +1606,16 @@ static void apply_trot_balance(robot_vec3_t world_feet[ROBOT_LEG_COUNT],
     }
     if (planted) { support.x /= (float)planted; support.z /= (float)planted; }
     robot_planar_point_t capture = support, xi = {0};
-    if (walking && state.attitude_valid && attitude_control.reference_valid) {
+    if (ROBOT_TROT_IMU_CAPTURE && walking && state.attitude_valid && attitude_control.reference_valid) {
         // Unplanned tilt in the IK convention: measured minus reference minus
         // the posture held while trotting.
         const robot_tilt_t tilt = {
-            .roll = ROBOT_IMU_ROLL_SIGN * wrap_radians(balance_imu.roll_radians -
-                                                       attitude_control.reference_roll_radians) - held_roll,
+            .roll = wrap_radians(balance_imu.roll_radians -
+                                 attitude_control.reference_roll_radians) - held_roll,
             .pitch = wrap_radians(balance_imu.pitch_radians -
                                   attitude_control.reference_pitch_radians) - held_pitch,
         };
-        const robot_tilt_t rate = {ROBOT_IMU_ROLL_SIGN * balance_imu.roll_rate_rad_s,
-                                   balance_imu.pitch_rate_rad_s};
+        const robot_tilt_t rate = {balance_imu.roll_rate_rad_s, balance_imu.pitch_rate_rad_s};
         xi = robot_walk_balance_capture(&trot_balance, &config,
                                         robot_walk_tilt_displacement(tilt, com_height_mm),
                                         robot_walk_tilt_velocity(rate, com_height_mm),
@@ -1764,9 +1772,8 @@ static void gait_tick(void)
     const float pose_pitch = joint_trajectory_step(&pose_trajectory[1],
         pose_mode ? -input.forward * ROBOT_POSE_MAX_PITCH_RAD : 0.0f,
         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
-    // The posture loop runs in modes 1 (balance) and 2 (torso pose) only.
-    const bool posture_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_BALANCE ||
-                              state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_POSE;
+    // The posture loop runs in mode 1 (balance) only.
+    const bool posture_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_BALANCE;
     update_attitude_controller(armed, active, trot_mode && active, posture_mode, pose_roll, pose_pitch);
     section_mark(AURA_GAIT_SECTION_ATTITUDE);
     const float phase_rate = armed ? robot_gait_phase_rate(reference_error, has_feedback, feedback_error) : 1.0f;
@@ -2112,6 +2119,15 @@ esp_err_t robot_gait_init(void)
             saved_attitude_limit >= ROBOT_ATTITUDE_MIN_MAX_CORRECTION_CDEG &&
             saved_attitude_limit <= ROBOT_ATTITUDE_ABSOLUTE_MAX_CORRECTION_CDEG)
             attitude_max_correction_cdeg = (uint16_t)saved_attitude_limit;
+        int16_t saved_level[2] = {0};
+        size_t saved_level_size = sizeof(saved_level);
+        if (nvs_get_blob(nvs, ROBOT_GAIT_NVS_LEVEL_KEY, saved_level, &saved_level_size) == ESP_OK &&
+            saved_level_size == sizeof(saved_level) &&
+            abs(saved_level[0]) <= 4500 && abs(saved_level[1]) <= 4500) {
+            attitude_control.level_stored = true;
+            attitude_control.level_roll_radians = (float)saved_level[0] * ROBOT_ATTITUDE_CDEG_TO_RAD;
+            attitude_control.level_pitch_radians = (float)saved_level[1] * ROBOT_ATTITUDE_CDEG_TO_RAD;
+        }
         robot_locomotion_profile_t three_profile;
         size_t three_size = sizeof(three_profile);
         if (nvs_get_blob(nvs, "triprof1", &three_profile, &three_size) == ESP_OK &&
@@ -2256,19 +2272,15 @@ esp_err_t robot_gait_arm(void)
     xSemaphoreGive(gait_mutex);
     last_arm_preflight_slot = 0xff;
     const esp_err_t result = robot_control_arm();
-    // The level reference is captured by the gait tick once the neutral
-    // stance has settled, now that the robot reads as armed.
-    if (result == ESP_OK && attitude_control.enabled) {
-        bool started = false;
-        for (int attempt = 0; attempt < 10 && !started; ++attempt) {
-            if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) continue;
-            attitude_control.reference_valid = false;
-            attitude_control.reference_pending = true;
-            attitude_control.reference_settled_ticks = 0;
-            xSemaphoreGive(gait_mutex);
-            started = true;
-        }
-        if (!started) ESP_LOGE("robot_gait", "posture reference capture could not start");
+    // Level is the saved calibration, the same on every arm. Without one the
+    // posture loop stays idle until the operator calibrates.
+    if (result == ESP_OK && attitude_control.enabled && attitude_control.level_stored &&
+        xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        attitude_control.reference_roll_radians = attitude_control.level_roll_radians;
+        attitude_control.reference_pitch_radians = attitude_control.level_pitch_radians;
+        attitude_control.reference_valid = true;
+        attitude_control.reference_pending = false;
+        xSemaphoreGive(gait_mutex);
     }
     return result;
 }
@@ -2496,6 +2508,46 @@ esp_err_t robot_gait_set_attitude_balance_enabled(bool enabled)
     }
     xSemaphoreGive(gait_mutex);
     return result;
+}
+
+// Saves the current IMU roll/pitch as level. Aura must be armed and standing
+// still in its neutral stance; the operator puts it on flat ground first.
+esp_err_t robot_gait_calibrate_level(void)
+{
+    if (!gait_mutex || robot_control_calibration_is_active()) return ESP_ERR_INVALID_STATE;
+    if (!robot_control_is_armed()) return ESP_ERR_INVALID_STATE;
+    robot_gait_snapshot_t gait = {0};
+    if (!robot_gait_snapshot(&gait)) return ESP_ERR_TIMEOUT;
+    if (gait.trot_walking || gait.jumping || gait.input_forward_milli || gait.input_lateral_milli ||
+        gait.input_turn_milli)
+        return ESP_ERR_INVALID_STATE;            // sticks must be centred, nothing moving
+    mpu6050_attitude_t measured = {0};
+    mpu6050_get_attitude(&measured);
+    const int64_t now_us = esp_timer_get_time();
+    if (!measured.valid || now_us - measured.sample_time_us > ROBOT_ATTITUDE_FRESH_US)
+        return ESP_ERR_INVALID_RESPONSE;
+    const int16_t level[2] = {radians_to_cdeg_signed(measured.roll_radians),
+                              radians_to_cdeg_signed(measured.pitch_radians)};
+    if (abs(level[0]) > 4500 || abs(level[1]) > 4500) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(ROBOT_GAIT_NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (result == ESP_OK) {
+        result = nvs_set_blob(nvs, ROBOT_GAIT_NVS_LEVEL_KEY, level, sizeof(level));
+        if (result == ESP_OK) result = nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (result != ESP_OK) return result;
+    if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    attitude_control.level_stored = true;
+    attitude_control.level_roll_radians = measured.roll_radians;
+    attitude_control.level_pitch_radians = measured.pitch_radians;
+    attitude_control.reference_roll_radians = measured.roll_radians;
+    attitude_control.reference_pitch_radians = measured.pitch_radians;
+    attitude_control.reference_valid = attitude_control.enabled;
+    attitude_control.reference_pending = false;
+    xSemaphoreGive(gait_mutex);
+    ESP_LOGW("robot_gait", "level calibrated: roll %d pitch %d cdeg", level[0], level[1]);
+    return ESP_OK;
 }
 
 esp_err_t robot_gait_set_attitude_correction_limit_cdeg(uint16_t centidegrees)

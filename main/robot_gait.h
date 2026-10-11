@@ -97,6 +97,7 @@ typedef struct {
     bool attitude_control_active;
     bool attitude_reference_valid;
     bool attitude_reference_pending;
+    bool attitude_level_stored;
     int16_t attitude_roll_cdeg;
     int16_t attitude_pitch_cdeg;
     int16_t attitude_reference_roll_cdeg;
@@ -164,6 +165,8 @@ int16_t robot_gait_get_lateral_stance_mm(void);
 // an actuator command by itself.
 esp_err_t robot_gait_set_attitude_balance_enabled(bool enabled);
 esp_err_t robot_gait_set_attitude_correction_limit_cdeg(uint16_t centidegrees);
+// Saves the current IMU attitude as level (Aura armed, still, on flat ground).
+esp_err_t robot_gait_calibrate_level(void);
 // Read-only kinematic preflight followed by the usual torque-on sequence.
 // It refuses arming when the saved per-axis calibration cannot represent the
 // normal standing pose; no servo target is written on a failed preflight.

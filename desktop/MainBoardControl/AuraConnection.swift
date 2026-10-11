@@ -32,6 +32,7 @@ struct AuraAttitude: Equatable {
     var active = false
     var referenceCaptured = false
     var referencePending = false
+    var levelStored = false        // a level calibration is saved on Aura
     var rollDegrees = 0.0
     var pitchDegrees = 0.0
     var referenceRollDegrees = 0.0
@@ -712,6 +713,11 @@ final class AuraConnection: NSObject, ObservableObject {
         send([0x2f], operation: 0x2f)
     }
 
+    // Saves Aura's current IMU attitude as level (armed, still, flat ground).
+    func calibrateLevel() {
+        send([0x30], operation: 0x30)
+    }
+
     func readLEDBrightness() {
         ledBrightnessWrite = false
         send([0x2e], operation: 0x2e)
@@ -1288,6 +1294,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 active: flags & 4 != 0,
                 referenceCaptured: flags & 8 != 0,
                 referencePending: flags & 16 != 0,
+                levelStored: flags & 32 != 0,
                 rollDegrees: Double(i16(data, 6)) / 100.0,
                 pitchDegrees: Double(i16(data, 8)) / 100.0,
                 referenceRollDegrees: Double(i16(data, 10)) / 100.0,
@@ -1578,6 +1585,15 @@ final class AuraConnection: NSObject, ObservableObject {
                     message = String(format: "No VL53L4CD found (ESP 0x%X).", result)
                     return
                 }
+                if operation == 0x30 {
+                    message = switch result {
+                    case 0x103: "Level not saved: arm Aura, centre the sticks and let it stand still."
+                    case 0x108: "Level not saved: no fresh IMU sample."
+                    case 0x102: "Level not saved: Aura is tilted more than 45°."
+                    default: String(format: "Level not saved (ESP 0x%X).", result)
+                    }
+                    return
+                }
                 message = String(format: "Aura command 0x%02X: ESP error 0x%X.", operation, result)
                 if operation == 0x03 { torqueEnabled.toggle() }
                 return
@@ -1594,6 +1610,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 message = "New servo ID: \(data[6])."
                 scanServos()
             case 0x07: message = "LED command done."
+            case 0x30: message = "Level saved on Aura; used on every arm from now on."
             case 0x2e:
                 ledBrightness = Double(data[6])
                 if ledBrightnessWrite { message = "Strip brightness saved on Aura: \(data[6]) %." }

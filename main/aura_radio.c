@@ -104,6 +104,7 @@ enum {
     AURA_CMD_LED_BRIGHTNESS = 0x2e,
     // Sets the state estimator's position and heading to zero (RAM only).
     AURA_CMD_ESTIMATOR_REZERO = 0x2f,
+    AURA_CMD_LEVEL_CALIBRATE = 0x30,
     AURA_EVT_POWER = 0x10,
     AURA_EVT_IMU = 0x11,
     AURA_EVT_TOF = 0x12,
@@ -328,6 +329,7 @@ static void make_robot_attitude_frame(uint8_t frame[AURA_FRAME_SIZE])
     if (gait.attitude_control_active) frame[1] |= 4;
     if (gait.attitude_reference_valid) frame[1] |= 8;
     if (gait.attitude_reference_pending) frame[1] |= 16;
+    if (gait.attitude_level_stored) frame[1] |= 32;
     put_u32(frame + 2, app.imu.sample_count);
     put_i16(frame + 6, gait.attitude_roll_cdeg);
     put_i16(frame + 8, gait.attitude_pitch_cdeg);
@@ -1048,6 +1050,10 @@ static void process_command(const aura_command_t *command)
         detail = (uint8_t)gait;
         break;
     }
+    case AURA_CMD_LEVEL_CALIBRATE:
+        if (command->size != 1) break;
+        result = robot_gait_calibrate_level();
+        break;
     case AURA_CMD_ESTIMATOR_REZERO:
         if (command->size != 1) break;
         estimator_service_rezero();

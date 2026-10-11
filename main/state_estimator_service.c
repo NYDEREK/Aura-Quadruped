@@ -9,14 +9,14 @@
 
 #define ESTIMATOR_PERIOD_MS 20
 #define DEG_TO_RAD 0.01745329252f
-// IMU -> IK frame (X forward, Y up, Z left), established on Aura 2026-10-11:
-// roll runs opposite and pitch the same way (the posture loop balanced
-// pitch and pushed roll the wrong way), and with those only accelerometer x
-// opposite, z unchanged keeps gravity vertical on tilted static samples.
-#define IMU_ROLL_SIGN (-1.0f)
+// IMU -> IK frame (X forward, Y up, Z left). Roll and pitch carry the IK
+// sign: the posture loop is negative feedback on both axes with them
+// (verified on Aura 2026-10-11). With that, accelerometer x and z opposite
+// is the combination that keeps gravity vertical on tilted static samples.
+#define IMU_ROLL_SIGN (1.0f)
 #define IMU_PITCH_SIGN (1.0f)
 #define IMU_ACCEL_X_SIGN (-1.0f)
-#define IMU_ACCEL_Z_SIGN (1.0f)
+#define IMU_ACCEL_Z_SIGN (-1.0f)
 
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static robot_estimator_t estimator;
