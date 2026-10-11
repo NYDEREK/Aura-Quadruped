@@ -172,11 +172,17 @@ private struct BoardHealthPanel: View {
             VStack(alignment: .leading, spacing: 5) {
                 ValueRow(label: "Last start", value: health.available ? health.resetText : "—",
                          tint: health.resetAbnormal ? Theme.orange : Theme.text)
+                if health.stackAvailable {
+                    ValueRow(label: "Gait tick (budget 20 ms)", value: "\(health.gaitTickMaxMs) ms",
+                             tint: health.gaitTickMaxMs > 20 ? Theme.red : health.gaitTickMaxMs > 14 ? Theme.orange : Theme.text)
+                }
                 ForEach(AuraHealth.tasks.indices, id: \.self) { task in
                     let rate = health.rates[task]
+                    let stack = health.stackFree[task]
                     ValueRow(label: AuraHealth.tasks[task],
-                             value: !aura.isConnected || rate < 0 ? "—" : String(format: "%.0f Hz", rate),
-                             tint: rate == 0 ? Theme.red : Theme.text)
+                             value: (!aura.isConnected || rate < 0 ? "—" : String(format: "%.0f Hz", rate))
+                                 + (stack > 0 ? " · \(stack) B free" : ""),
+                             tint: rate == 0 || (stack > 0 && stack < AuraHealth.lowStackBytes) ? Theme.red : Theme.text)
                 }
             }
             .frame(maxWidth: 360, alignment: .leading)

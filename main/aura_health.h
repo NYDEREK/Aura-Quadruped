@@ -19,3 +19,8 @@ typedef enum {
 
 void aura_health_beat(aura_task_t task);
 uint32_t aura_health_beats(aura_task_t task);
+// Least stack the task has had free since boot, in bytes (0 = not seen yet).
+uint16_t aura_health_stack_free(aura_task_t task);
+// Longest gait tick since the last take, in microseconds (50 Hz budget: 20 ms).
+void aura_health_gait_tick_us(uint32_t us);
+uint32_t aura_health_take_gait_tick_max_us(void);

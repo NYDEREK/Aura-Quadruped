@@ -201,6 +201,8 @@ final class SessionLogger: ObservableObject {
     private var lastModePosition: SIMD3<Double>?
     private var previous: (armed: Bool, mode: Int, moving: Bool, fault: Bool, pad: Bool, earlyMask: UInt8,
                            stalled: Set<String>)?
+    private var reportedLowStack: Set<String> = []
+    private var lastSlowTickEvent = -10.0
 
     private var cachedTrace: (id: UUID, trace: AuraSessionTrace?)?
 
@@ -238,6 +240,8 @@ final class SessionLogger: ObservableObject {
             liveTrace = AuraSessionTrace()
             modeStats = [:]
             events = []
+            reportedLowStack = []
+            lastSlowTickEvent = -10
             lastFrameTime = nil
             lastModePosition = nil
             previous = nil
@@ -346,6 +350,18 @@ final class SessionLogger: ObservableObject {
         }
         for task in previous.stalled.subtracting(stalled).sorted() {
             events.append(AuraSessionEvent(t: t, kind: "task resumed", detail: task))
+        }
+        // The gait loop has 20 ms per tick; longer ticks starve lower tasks.
+        if health.gaitTickMaxMs > 20 && t - lastSlowTickEvent > 1 {
+            lastSlowTickEvent = t
+            events.append(AuraSessionEvent(t: t, kind: "gait tick slow",
+                                           detail: "\(health.gaitTickMaxMs) ms · mode \(mode)"))
+        }
+        for task in Set(health.lowStackTasks).subtracting(reportedLowStack).sorted() {
+            reportedLowStack.insert(task)
+            let index = AuraHealth.tasks.firstIndex(of: task) ?? 0
+            events.append(AuraSessionEvent(t: t, kind: "low stack",
+                                           detail: "\(task) · \(health.stackFree[index]) B free · mode \(mode)"))
         }
         if state.armed != previous.armed {
             events.append(AuraSessionEvent(t: t, kind: state.armed ? "armed" : "disarmed", detail: "mode \(mode)"))

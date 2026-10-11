@@ -1958,8 +1958,10 @@ static void gait_task_fn(void *unused)
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
         if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+            const int64_t started = esp_timer_get_time();
             gait_tick();
             xSemaphoreGive(gait_mutex);
+            aura_health_gait_tick_us((uint32_t)(esp_timer_get_time() - started));
             aura_health_beat(AURA_TASK_GAIT);
         }
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS));
@@ -2470,7 +2472,9 @@ esp_err_t robot_gait_start(void)
 {
     if (!gait_mutex) return ESP_ERR_INVALID_STATE;
     if (gait_task) return ESP_OK;
-    return xTaskCreate(gait_task_fn, "robot_gait", 4096, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+    // 8 KB: gait_tick alone has a 1 KB frame, and mode 4 adds the trot
+    // balance and body planner below it; 4 KB left almost no margin.
+    return xTaskCreate(gait_task_fn, "robot_gait", 8192, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot)

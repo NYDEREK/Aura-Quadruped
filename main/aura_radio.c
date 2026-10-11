@@ -136,6 +136,7 @@ enum {
     // velocity forward/left mm/s, gyro bias in 0.001 deg/s.
     AURA_EVT_ROBOT_ESTIMATE = 0x32,
     AURA_EVT_HEALTH = 0x33,
+    AURA_EVT_HEALTH_STACK = 0x34,
 };
 
 typedef struct {
@@ -541,6 +542,18 @@ static void make_health_frame(uint8_t frame[AURA_FRAME_SIZE])
     frame[1] = (uint8_t)esp_reset_reason();
     for (int task = 0; task < AURA_TASK_COUNT; ++task)
         put_u16(frame + 2 + task * 2, (uint16_t)aura_health_beats((aura_task_t)task));
+}
+
+// [1] longest gait tick since the last frame in ms (50 Hz budget 20 ms),
+// [2..19] least free stack of each task in bytes, aura_task_t order.
+static void make_health_stack_frame(uint8_t frame[AURA_FRAME_SIZE])
+{
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_HEALTH_STACK;
+    const uint32_t tick_ms = (aura_health_take_gait_tick_max_us() + 999u) / 1000u;
+    frame[1] = (uint8_t)(tick_ms > 255u ? 255u : tick_ms);
+    for (int task = 0; task < AURA_TASK_COUNT; ++task)
+        put_u16(frame + 2 + task * 2, aura_health_stack_free((aura_task_t)task));
 }
 
 static void make_robot_body_reference_frame(uint8_t frame[AURA_FRAME_SIZE])
@@ -1267,6 +1280,8 @@ static void telemetry_task(void *argument)
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_health_frame(frame);
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+            make_health_stack_frame(frame);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             // Board-owned profiles synchronize independently of the 50 Hz
             // controller. The desktop never feeds targets back to Aura.
             if (tick % AURA_TELEMETRY_HZ == 0) {      // once a second
@@ -1394,7 +1409,7 @@ esp_err_t aura_radio_init(void)
                     &controller_task_handle) != pdPASS ||
         xTaskCreate(command_task, "aura_commands", 4096, NULL, 5,
                     &command_task_handle) != pdPASS ||
-        (AURA_ENABLE_WIFI && xTaskCreate(telemetry_task, "aura_telemetry", 3072, NULL, 4,
+        (AURA_ENABLE_WIFI && xTaskCreate(telemetry_task, "aura_telemetry", 4096, NULL, 4,
                     &telemetry_task_handle) != pdPASS)) {
         shutdown_requested = true;
         if (controller_task_handle) vTaskDelete(controller_task_handle);

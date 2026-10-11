@@ -74,6 +74,14 @@ struct AuraHealth: Equatable {
     var resetReason = 0
     var beats = [Int](repeating: 0, count: tasks.count)
     var rates = [Double](repeating: -1, count: tasks.count)   // loops per second, -1 = not measured yet
+    var stackFree = [Int](repeating: 0, count: tasks.count)   // least free stack since boot, bytes (0 = unknown)
+    var gaitTickMaxMs = 0                                      // longest gait tick in the last 100 ms (budget 20)
+    var stackAvailable = false
+
+    static let lowStackBytes = 512
+    var lowStackTasks: [String] {
+        Self.tasks.indices.filter { stackFree[$0] > 0 && stackFree[$0] < Self.lowStackBytes }.map { Self.tasks[$0] }
+    }
 
     var resetText: String {
         switch resetReason {

@@ -1368,6 +1368,10 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingRobotState.applyEstimateFrame(data)
         } else if data[0] == 0x33 {
             applyHealthFrame(data)
+        } else if data[0] == 0x34 {
+            pendingHealth.stackAvailable = true
+            pendingHealth.gaitTickMaxMs = Int(data[1])
+            pendingHealth.stackFree = (0..<AuraHealth.tasks.count).map { Int(u16(data, 2 + $0 * 2)) }
         } else if data[0] == 0x2f || data[0] == 0x30 {
             // Aura reports its stored gait profiles and motion tuning on the
             // telemetry channel; the parser for them lives with the events.
