@@ -83,7 +83,7 @@ final class FirmwareUpdater: ObservableObject {
             try task.run()
             if !capture { process = task }
         } catch {
-            log += "Nie udało się uruchomić: \(error.localizedDescription)\n"
+            log += "Could not start: \(error.localizedDescription)\n"
             done("", -1)
         }
     }
@@ -97,34 +97,34 @@ struct FirmwareView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            GroupBox("Firmware Aury") {
+            GroupBox("Aura firmware") {
                 VStack(alignment: .leading, spacing: 10) {
                     if let path = updater.projectPath {
-                        LabeledContent("Projekt", value: path)
-                        LabeledContent("Wersja w repozytorium", value: updater.commit.isEmpty ? "—" : updater.commit)
+                        LabeledContent("Project", value: path)
+                        LabeledContent("Repository version", value: updater.commit.isEmpty ? "—" : updater.commit)
                     } else {
-                        Text("Nie znam ścieżki do repozytorium Aura-Quadruped. Zbuduj aplikację przez desktop/MainBoardControl/build.sh.")
+                        Text("Repository path unknown — build the app with desktop/MainBoardControl/build.sh.")
                             .foregroundStyle(.orange)
                     }
-                    Toggle("Najpierw pobierz najnowszy kod z GitHuba (git pull)", isOn: $updater.pullFirst)
-                    Text("USB-C · ustawienia i kalibracja bez kasowania · kopia NVS w backups/")
+                    Toggle("Pull the latest code from GitHub first (git pull)", isOn: $updater.pullFirst)
+                    Text("USB-C · settings and calibration are kept · NVS backup in backups/")
                         .font(Theme.label).foregroundStyle(Theme.muted)
                     HStack {
                         Button {
                             updater.confirm = true
                         } label: {
-                            Label("Wgraj najnowszy kod do Aury", systemImage: "arrow.down.circle.fill")
+                            Label("Flash latest code to Aura", systemImage: "arrow.down.circle.fill")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(AuraButtonStyle(prominent: true))
                         .disabled(updater.projectPath == nil || updater.running || armed)
-                        if updater.running { ProgressView().controlSize(.small); Text("Wgrywanie…") }
+                        if updater.running { ProgressView().controlSize(.small); Text("Flashing…") }
                         if let result = updater.lastResult, !updater.running {
-                            Text(result == 0 ? "Gotowe" : "Błąd (kod \(result)) — szczegóły w logu")
+                            Text(result == 0 ? "Done" : "Failed (code \(result)) — see the log")
                                 .foregroundStyle(result == 0 ? .green : .red)
                         }
                     }
                     if armed {
-                        Text("Aura jest uzbrojona — rozbrój ją (Create) przed wgraniem. Restart ESP zwalnia serwa.")
+                        Text("Aura is armed — disarm it (Create) before flashing.")
                             .foregroundStyle(.orange)
                     }
                 }
@@ -146,16 +146,16 @@ struct FirmwareView: View {
         }
         .padding(16)
         .onAppear { updater.refreshCommit() }
-        .alert("Wgrać firmware do Aury?", isPresented: $updater.confirm) {
-            Button("Wgraj") {
+        .alert("Flash firmware to Aura?", isPresented: $updater.confirm) {
+            Button("Flash") {
                 updater.flash(pull: updater.pullFirst) { ok in
                     // The ESP restarts after flashing; reconnect once it is back.
                     DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 8 : 1)) { aura.reconnect() }
                 }
             }
-            Button("Anuluj", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("ESP zrestartuje się, a serwa zostaną rozbrojone. Robot powinien leżeć lub być podparty.")
+            Text("The ESP restarts and the servos disarm. Let the robot lie down or support it.")
         }
     }
 }

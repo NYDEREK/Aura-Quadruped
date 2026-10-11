@@ -105,10 +105,10 @@ enum ToFDetectionWindow: UInt8, CaseIterable, Identifiable {
     var id: UInt8 { rawValue }
     var title: String {
         switch self {
-        case .below: "Poniżej dolnego progu"
-        case .above: "Powyżej górnego progu"
-        case .outside: "Poza oknem"
-        case .inside: "Wewnątrz okna"
+        case .below: "Below low threshold"
+        case .above: "Above high threshold"
+        case .outside: "Outside window"
+        case .inside: "Inside window"
         }
     }
 }
@@ -118,7 +118,7 @@ enum ServoOperatingMode: UInt8, CaseIterable, Identifiable {
     case motor = 1
 
     var id: UInt8 { rawValue }
-    var title: String { self == .servo ? "Serwo" : "Motor" }
+    var title: String { self == .servo ? "Servo" : "Motor" }
 }
 
 enum DualSenseConnectionState: UInt8 {
@@ -131,12 +131,12 @@ enum DualSenseConnectionState: UInt8 {
 
     var title: String {
         switch self {
-        case .off: "Bluetooth wyłączony"
-        case .ready: "Gotowy"
-        case .scanning: "Szukam pada…"
-        case .connecting: "Łączę…"
-        case .connected: "Połączony"
-        case .error: "Błąd połączenia"
+        case .off: "Bluetooth off"
+        case .ready: "Ready"
+        case .scanning: "Scanning…"
+        case .connecting: "Connecting…"
+        case .connected: "Connected"
+        case .error: "Connection error"
         }
     }
 }
@@ -147,7 +147,7 @@ struct AuraDualSenseDevice: Identifiable, Equatable {
     var rssi: Int
 
     var id: String { address.map { String(format: "%02X", $0) }.joined(separator: ":") }
-    var displayName: String { name.isEmpty ? "Nieznane urządzenie" : name }
+    var displayName: String { name.isEmpty ? "Unknown device" : name }
     var signalText: String { rssi == 0 ? "RSSI —" : "\(rssi) dBm" }
 }
 
@@ -229,12 +229,12 @@ struct AuraGaitProfile: Equatable, Identifiable {
 
     var title: String {
         switch gait {
-        case 1: "Trot · 2 nogi"
-        case 2: "Krok 1×"
-        case 3: "Run · szybki diagonalny"
-        case 4: "Climb · 1 noga"
-        case 5: "3 łapy · eksperymentalny"
-        default: "Nieznany chód"
+        case 1: "Trot · 2 legs"
+        case 2: "Crawl · 1 leg"
+        case 3: "Run · fast diagonal"
+        case 4: "Climb · 1 leg"
+        case 5: "Tripod · experimental"
+        default: "Unknown gait"
         }
     }
 
@@ -319,7 +319,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // bounded final fallback in that situation.
     private static let lastKnownBoardAddress = "192.168.55.11"
     private static let bridgePort: NWEndpoint.Port = 4243
-    @Published var connectionText = "Szukam Aury w sieci Wi-Fi…"
+    @Published var connectionText = "Looking for Aura on Wi-Fi…"
     @Published var isConnected = false
     @Published var busy = false
     // High-rate telemetry is committed atomically at the end of a board
@@ -372,6 +372,7 @@ final class AuraConnection: NSObject, ObservableObject {
     let robotRenderChannel = AuraRobotRenderChannel()
     let history = TelemetryHistory()
     let route = RouteRecorder()
+    let sessions = SessionLogger()
 
     var detectedToFSensorIndices: [Int] {
         tofSensors.indices.filter { tofSensors[$0].present }
@@ -466,7 +467,7 @@ final class AuraConnection: NSObject, ObservableObject {
             connect(to: .hostPort(host: "127.0.0.1", port: Self.bridgePort))
             return
         }
-        connectionText = "Szukam Aura Main Board w sieci Wi-Fi…"
+        connectionText = "Looking for Aura Main Board on Wi-Fi…"
         let search = NWBrowser(for: .bonjour(type: "_aura._tcp", domain: nil), using: .tcp)
         browser = search
         search.browseResultsChangedHandler = { [weak self, weak search] results, _ in
@@ -502,7 +503,7 @@ final class AuraConnection: NSObject, ObservableObject {
         let link = NWConnection(to: endpoint, using: .tcp)
         NSLog("Aura network connecting: %@", String(describing: endpoint))
         connection = link
-        connectionText = "Łączę z Aura Main Board przez Wi-Fi…"
+        connectionText = "Connecting to Aura Main Board over Wi-Fi…"
         link.stateUpdateHandler = { [weak self, weak link] state in
             Task { @MainActor in
                 guard let self, let link, self.connection === link else { return }
@@ -511,7 +512,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 case .ready:
                     self.isConnected = true
                     self.busy = false
-                    self.connectionText = "Połączono z Aura Main Board (Wi-Fi)"
+                    self.connectionText = "Connected to Aura Main Board (Wi-Fi)"
                     self.receive(on: link)
                     self.send([0x08], operation: 0x08)
                     self.refreshToFConfigurations()
@@ -563,9 +564,9 @@ final class AuraConnection: NSObject, ObservableObject {
         receivedFirstFrame = false
         isConnected = false; busy = false; requestedOperation = nil
         calibrationLivePreviewActive = false
-        connectionText = "Brak połączenia — szukam płytki w sieci…"
+        connectionText = "Disconnected · looking for the board…"
         if interruptedZeroCapture {
-            message = "Połączenie przerwano podczas zapisu referencji. Nic nie zostało uzbrojone — po ponownym połączeniu zapisz tę nogę od początku."
+            message = "Connection lost while saving the reference. Nothing was armed; save this leg again after reconnecting."
         }
         retry?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.startScan() }
@@ -604,7 +605,7 @@ final class AuraConnection: NSObject, ObservableObject {
 
     private func send(_ bytes: [UInt8], operation: UInt8) {
         guard isConnected, let link = connection, !bytes.isEmpty, bytes.count <= 20 else {
-            message = "Brak połączenia Wi-Fi z Aura Main Board."
+            message = "No Wi-Fi connection to Aura Main Board."
             busy = false
             return
         }
@@ -670,6 +671,11 @@ final class AuraConnection: NSObject, ObservableObject {
               UInt8((color.blueComponent * 255).rounded())], operation: 0x07)
     }
 
+    // Re-zero Aura's position estimate (RAM only, no settings involved).
+    func rezeroEstimator() {
+        send([0x2f], operation: 0x2f)
+    }
+
     func readLEDBrightness() {
         ledBrightnessWrite = false
         send([0x2e], operation: 0x2e)
@@ -695,12 +701,12 @@ final class AuraConnection: NSObject, ObservableObject {
         guard (0x08...0x77).contains(sensor.address),
               sensor.address != 0x29, sensor.address != 0x40,
               sensor.address != otherAddress else {
-            message = "Adres musi być unikalny, mieścić się w 0x08…0x77 i nie może być 0x29 ani 0x40."
+            message = "Address must be unique, within 0x08…0x77, and not 0x29 or 0x40."
             return
         }
         guard (10...200).contains(sensor.timingBudget),
               sensor.intermeasurement == 0 || sensor.intermeasurement > sensor.timingBudget else {
-            message = "Budżet pomiaru: 10…200 ms. Okres ma być równy 0 albo większy od budżetu."
+            message = "Timing budget: 10…200 ms. Period must be 0 or longer than the budget."
             return
         }
         let budget = UInt16(sensor.timingBudget)
@@ -714,12 +720,12 @@ final class AuraConnection: NSObject, ObservableObject {
         guard tofSensors.indices.contains(index) else { return }
         let sensor = tofSensors[index]
         guard sensor.valid else {
-            message = "Do kalibracji potrzebny jest poprawny pomiar. Ustaw matowy cel na znanej odległości."
+            message = "Calibration needs a valid reading. Place a matte target at a known distance."
             return
         }
         let newOffset = sensor.offset + referenceDistance - sensor.distance
         guard (-1024...1023).contains(newOffset) else {
-            message = "Wyliczona korekta \(newOffset) mm przekracza zakres −1024…1023 mm."
+            message = "Computed offset \(newOffset) mm is outside −1024…1023 mm."
             return
         }
         let rawOffset = UInt16(bitPattern: Int16(newOffset))
@@ -737,16 +743,16 @@ final class AuraConnection: NSObject, ObservableObject {
               (0...16_384).contains(sensor.signalThresholdKcps),
               (0...16_383).contains(sensor.sigmaThresholdMm),
               (0...3).contains(sensor.detectionWindow) else {
-            message = "Ustawienia optyczne są poza zakresem VL53L4CD."
+            message = "Optical settings are outside the VL53L4CD range."
             return
         }
         if sensor.detectionEnabled {
             guard sensor.intermeasurement > sensor.timingBudget else {
-                message = "Próg detekcji wymaga trybu okresowego: okres musi być większy od budżetu pomiaru."
+                message = "Threshold detection needs periodic mode: period longer than the timing budget."
                 return
             }
             guard sensor.detectionLowMm <= sensor.detectionHighMm else {
-                message = "Dolny próg odległości nie może być większy od górnego."
+                message = "Low threshold cannot be above the high threshold."
                 return
             }
         }
@@ -801,7 +807,7 @@ final class AuraConnection: NSObject, ObservableObject {
 
     func flipCalibrationDirectionAtReference(leg: Int, axis: Int, referenceDegrees: Double) {
         guard isConnected else {
-            message = "Brak połączenia Wi-Fi z Aura Main Board."
+            message = "No Wi-Fi connection to Aura Main Board."
             return
         }
         guard (0..<4).contains(leg), (0..<3).contains(axis) else { return }
@@ -815,7 +821,7 @@ final class AuraConnection: NSObject, ObservableObject {
 
     func repairLegacyDirectionFlipAtReference(leg: Int, axis: Int, referenceDegrees: Double) {
         guard isConnected else {
-            message = "Brak połączenia Wi-Fi z Aura Main Board."
+            message = "No Wi-Fi connection to Aura Main Board."
             return
         }
         guard (0..<4).contains(leg), (0..<3).contains(axis) else { return }
@@ -833,7 +839,7 @@ final class AuraConnection: NSObject, ObservableObject {
     func reverseCalibrationDirectionProbe(leg: Int, axis: Int,
                                           referenceDegrees: Double, probeDegrees: Double = 12) {
         _ = (leg, axis, referenceDegrees, probeDegrees)
-        message = "Automatyczne odwrócenie z ruchem zostało usunięte. Zwolnij moment, ustaw oś ręcznie na referencji i użyj „Zapisz odwrócony kierunek — bez ruchu”."
+        message = "Automatic flip with motion was removed. Release the axis, set it to the reference by hand and use Save reversed direction · no motion."
     }
 
     private func sendRobotAxisConfiguration(_ axis: RobotAxisConfiguration) {
@@ -857,7 +863,7 @@ final class AuraConnection: NSObject, ObservableObject {
     func configureRobot(_ axes: [RobotAxisConfiguration]) {
         let assigned = axes.filter(\.assigned)
         guard Set(assigned.map(\.servoID)).count == assigned.count else {
-            message = "Nie zapisuję: ten sam ID serwa jest przypisany do więcej niż jednej osi."
+            message = "Not saved: the same servo ID is assigned to more than one axis."
             return
         }
         guard !axes.isEmpty else { return }
@@ -874,11 +880,11 @@ final class AuraConnection: NSObject, ObservableObject {
     private func sendNextRobotAxisConfiguration() {
         guard isConnected else {
             robotConfigurationQueue.removeAll()
-            message = "Połączenie z Aurą zostało przerwane podczas zapisu osi."
+            message = "Connection to Aura lost while saving axes."
             return
         }
         guard !robotConfigurationQueue.isEmpty else {
-            message = "Zapisano \(robotConfigurationCompleted) / \(robotConfigurationTotal) osi w Aurze."
+            message = "Saved \(robotConfigurationCompleted) / \(robotConfigurationTotal) axes on Aura."
             robotConfigurationTotal = 0
             robotConfigurationCompleted = 0
             return
@@ -900,7 +906,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // torque is on, so moving the UI slider cannot change a loaded leg.
     func setRobotBodyHeight(_ millimetres: Int) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić wysokość stania."
+            message = "Disarm Aura to change the stand height."
             return
         }
         let height = UInt16(max(120, min(250, millimetres)))
@@ -911,7 +917,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // enabled. Editing these sliders therefore cannot change a walking leg.
     func setRobotSingleFootTuning(stride: Int, lift: Int, frequency: Double) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić parametry kroku."
+            message = "Disarm Aura to change step parameters."
             return
         }
         let safeStride = UInt16(max(20, min(75, stride)))
@@ -937,7 +943,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // It sends no servo target and the planner reads it on Aura itself.
     func setRobotGaitProfile(_ profile: AuraGaitProfile) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić profil chodu."
+            message = "Disarm Aura to change the gait profile."
             return
         }
         let singleFoot = profile.gait == 2 || profile.gait == 4 || profile.gait == 5
@@ -968,7 +974,7 @@ final class AuraConnection: NSObject, ObservableObject {
 
     func setRobotMotionTuning(_ tuning: AuraMotionTuning) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić strojenie ruchu."
+            message = "Disarm Aura to change motion tuning."
             return
         }
         let gain = UInt16(max(100, min(1000, tuning.movingAttitudeGainPermille)))
@@ -988,7 +994,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // movement command when accepting it.
     func setRobotStaticBalance(comForward: Int, comLeft: Int, supportMargin: Int) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić równowagę kroku."
+            message = "Disarm Aura to change step balance."
             return
         }
         let forward = Int16(max(-120, min(120, comForward)))
@@ -1003,7 +1009,7 @@ final class AuraConnection: NSObject, ObservableObject {
 
     func setRobotLateralStance(_ millimetres: Int) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić rozstaw stóp."
+            message = "Disarm Aura to change foot spread."
             return
         }
         let stance = UInt16(max(0, min(80, millimetres)))
@@ -1015,7 +1021,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // writes a servo target.
     func setAttitudeBalance(enabled: Bool) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić korekcję postawy."
+            message = "Disarm Aura to change posture correction."
             return
         }
         send([0x29, enabled ? 1 : 0], operation: 0x29)
@@ -1025,7 +1031,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // not arm torque or send a pose to any joint.
     func setAttitudeCorrectionLimit(degrees: Double) {
         guard !robotState.armed else {
-            message = "Najpierw rozbrój robota, aby zmienić limit korekcji IMU."
+            message = "Disarm Aura to change the IMU correction limit."
             return
         }
         let centidegrees = UInt16(max(300, min(2000, Int((degrees * 100).rounded()))))
@@ -1054,7 +1060,7 @@ final class AuraConnection: NSObject, ObservableObject {
     func captureCalibrationZeros(leg: Int) {
         guard (0..<4).contains(leg) else { return }
         guard calibrationZeroQueue.isEmpty else {
-            message = "Trwa już zapis pozycji zerowych tej nogi."
+            message = "Zero capture for this leg is already running."
             return
         }
         calibrationZeroProgress = AuraCalibrationZeroProgress(leg: leg, completedAxes: [])
@@ -1076,7 +1082,7 @@ final class AuraConnection: NSObject, ObservableObject {
             calibrationZeroInFlight = nil
             calibrationZeroConfigFallback?.cancel()
             calibrationZeroConfigFallback = nil
-            message = "Trzy pozycje zerowe zapisane w Aurze."
+            message = "Three zero positions stored on Aura."
             return
         }
         let next = calibrationZeroQueue[0]
@@ -1293,6 +1299,8 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingRobotState.applyCoreFrame(data)
         } else if data[0] == 0x31 {
             pendingRobotState.applyBodyFrame(data)
+        } else if data[0] == 0x32 {
+            pendingRobotState.applyEstimateFrame(data)
         } else if data[0] == 0x2a {
             pendingRobotState.odometryValid = data[1] & 1 != 0
             pendingRobotState.odometryX = Double(i32(data, 2)) / 10.0
@@ -1320,6 +1328,8 @@ final class AuraConnection: NSObject, ObservableObject {
                                                            contacts: pendingFootContacts))
                 recordHistorySample()
                 route.ingest(state: pendingRobotState, imu: pendingIMU, attitude: pendingAttitude)
+                sessions.ingest(power: pendingPower, state: pendingRobotState, attitude: pendingAttitude,
+                                legs: pendingRobotLegTelemetry, route: route)
 
                 let now = ProcessInfo.processInfo.systemUptime
                 guard now - lastUICommitUptime >= uiCommitInterval else { return }
@@ -1376,70 +1386,70 @@ final class AuraConnection: NSObject, ObservableObject {
             requestedOperation = nil
             if result != 0 {
                 if operation == 0x20 || operation == 0x21 {
-                    message = String(format: "Nie zapisano bezpiecznej korekty kierunku (ESP 0x%X). Moment osi pozostaje wyłączony; ustaw ją ręcznie na pozycję referencyjną i spróbuj ponownie.", result)
+                    message = String(format: "Direction change not saved (ESP 0x%X). The axis stays released; set it to the reference by hand and try again.", result)
                     return
                 }
                 if operation == 0x22 {
-                    message = "Automatyczne odwrócenie kierunku zostało usunięte ze względów bezpieczeństwa. Nie wysłano ruchu ani nie zmieniono kalibracji."
+                    message = "Automatic direction flip was removed for safety. No motion sent, calibration unchanged."
                     return
                 }
                 if operation == 0x1a {
                     switch result {
                     case 0x102:
-                        message = "Test kierunku został zatrzymany, bo Aura nie dostała wiarygodnego odczytu pozycji serwa. Nie wysłano ruchu."
+                        message = "Direction test stopped: no reliable servo position reading. No motion sent."
                     case 0x106:
-                        message = "Test +12° przekroczyłby fizyczny zakres 0…4095 bieżącego enkodera. Aura nie włączyła momentu i nie wysłała ruchu."
+                        message = "The +12° test would leave the encoder's 0…4095 range. No torque, no motion."
                     case 0x103:
-                        message = "Test kierunku został zablokowany: robot jest uzbrojony, oś nie jest w trybie pozycyjnym, nie wróciła do zapisanej referencji albo poprzedni test nie został zwolniony. Nie wysłano ruchu."
+                        message = "Direction test blocked: Aura is armed, the axis is not in position mode, it is away from its stored reference, or the previous test was not released. No motion sent."
                     default:
-                        message = String(format: "Test kierunku został zablokowany przez Aurę (ESP 0x%X). Nie wysłano ruchu.", result)
+                        message = String(format: "Direction test blocked by Aura (ESP 0x%X). No motion sent.", result)
                     }
                     return
                 }
                 if operation == 0x17, robotConfigurationTotal != 0 {
                     robotConfigurationQueue.removeAll()
-                    message = "Zapis osi przerwany po \(robotConfigurationCompleted) / \(robotConfigurationTotal): ESP 0x\(String(result, radix: 16))."
+                    message = "Axis save stopped after \(robotConfigurationCompleted) / \(robotConfigurationTotal): ESP 0x\(String(result, radix: 16))."
                     robotConfigurationTotal = 0
                     robotConfigurationCompleted = 0
                     return
                 }
                 if operation == 0x14 {
-                    message = "Nie ma zapamiętanego pada albo pad jest wyłączony."
+                    message = "No paired pad, or the pad is off."
                     return
                 }
                 if operation == 0x12 {
-                    message = "Nie udało się uruchomić parowania DualSense."
+                    message = "Could not start DualSense pairing."
                     return
                 }
                 if operation == 0x13 {
-                    message = "Nie ma aktywnego pada do rozłączenia."
+                    message = "No active pad to disconnect."
                     return
                 }
                 if operation == 0x0f {
-                    message = String(format: "MPU6050 nie odpowiedział — WHO_AM_I 0x%02X.", data[6])
+                    message = String(format: "MPU6050 not responding · WHO_AM_I 0x%02X.", data[6])
                     return
                 }
                 if operation == 0x29 {
-                    message = "Nie zmieniono korekcji postawy. Robot musi być rozbrojony, bez aktywnej kalibracji."
+                    message = "Posture correction unchanged. Aura must be disarmed and not calibrating."
                     return
                 }
                 if operation == 0x2a {
-                    message = "Nie zmieniono limitu korekcji IMU. Robot musi być rozbrojony, bez aktywnej kalibracji."
+                    message = "IMU correction limit unchanged. Aura must be disarmed and not calibrating."
                     return
                 }
                 if operation == 0x18 {
                     if pendingRobotState.safetyFault.latched {
-                        message = "Aura pozostaje rozbrojona po zatrzymaniu awaryjnym. Sprawdź mechanikę i skasuj blokadę, zanim ponownie uzbroisz serwa."
+                        message = "Aura stays disarmed after an emergency stop. Check the mechanics and clear the stop before arming again."
                     } else if result == 0x106, data[6] < 12 {
                         let leg = ["LF", "RF", "LR", "RR"][Int(data[6]) / 3]
                         let axis = ["Ab/ad", "Hip", "Knee"][Int(data[6]) % 3]
-                        message = "Aura nie uzbroiła robota: \(leg) / \(axis) nie mieści się w zapisanych krańcach pozycji stania. Sprawdź i ponownie zapisz krańce tej osi."
+                        message = "Not armed: \(leg) / \(axis) is outside its stored limits in the stand pose. Check and save that axis's limits again."
                     } else if result == 0x10d {
-                        message = String(format: "Aura nie uzbroiła serw: bateria ma %.2f V, a 10,0 V to 0 %%. Naładuj baterię.", power.servoBusVoltage)
+                        message = String(format: "Not armed: battery at %.2f V, 10.0 V is 0 %%. Charge the battery.", power.servoBusVoltage)
                     } else if result == 0x103 {
-                        message = "Aura pozostaje w trybie kalibracji. W zakładce Calibration wyłącz podgląd TTL i rozbrój każdą nogę, a potem ponownie naciśnij Create."
+                        message = "Aura is still in calibration. In Calibration, stop the TTL preview and disarm every leg, then press Create again."
                     } else {
-                        message = "Aura nie uzbroiła serw: zapisz poprawne, kompletne 12 przypisań z unikalnymi ID."
+                        message = "Not armed: save a complete set of 12 assignments with unique IDs."
                     }
                     return
                 }
@@ -1448,13 +1458,13 @@ final class AuraConnection: NSObject, ObservableObject {
                     pendingCalibrationLimit = nil
                     switch result {
                     case 0x102:
-                        message = "Kraniec \(side) nie został zapisany: odczytana pozycja leży po niewłaściwej stronie obecnego drugiego krańca. Zwolnij moment, przesuń oś dalej w wybranym kierunku i sprawdź kierunek osi."
+                        message = "\(side) limit not saved: the reading is on the wrong side of the other limit. Release the axis, move it further that way and check its direction."
                     case 0x103:
-                        message = "Kraniec \(side) nie został zapisany, bo robot jest uzbrojony. Rozbrój go i spróbuj ponownie."
+                        message = "\(side) limit not saved: Aura is armed. Disarm and try again."
                     case 0x107:
-                        message = "Kraniec \(side) nie został zapisany: Aura nie dostała odpowiedzi TTL z tego serwa."
+                        message = "\(side) limit not saved: no TTL reply from this servo."
                     default:
-                        message = String(format: "Kraniec \(side) nie został zapisany (ESP 0x%X).", result)
+                        message = String(format: "\(side) limit not saved (ESP 0x%X).", result)
                     }
                     return
                 }
@@ -1464,7 +1474,7 @@ final class AuraConnection: NSObject, ObservableObject {
                     calibrationZeroQueue.removeAll()
                     calibrationZeroInFlight = nil
                     pendingCalibrationReference = nil
-                    message = "Referencja osi nie mieści się w bezpiecznym zakresie skonfigurowanego ruchu. Zwolnij moment, ustaw referencję ręcznie i zapisz ją ponownie."
+                    message = "Axis reference is outside the safe configured range. Release the axis, set the reference by hand and save again."
                     return
                 }
                 if (0x19...0x1d).contains(operation) {
@@ -1473,83 +1483,83 @@ final class AuraConnection: NSObject, ObservableObject {
                     calibrationZeroQueue.removeAll()
                     calibrationZeroInFlight = nil
                     if operation == 0x19 { pendingCalibrationReference = nil }
-                    message = String(format: "Kalibracja osi nie została wykonana (ESP 0x%X). Sprawdź ID serwa, pozycję nogi i to, że robot jest rozbrojony.", result)
+                    message = String(format: "Axis calibration failed (ESP 0x%X). Check the servo ID, the leg position and that Aura is disarmed.", result)
                     return
                 }
                 if operation == 0x0b || operation == 0x10 {
-                    message = String(format: "Konfigurację zapisano, ale czujniki nie uruchomiły się (ESP 0x%X).", result)
+                    message = String(format: "Configuration saved, but the sensors did not start (ESP 0x%X).", result)
                     refreshToFConfigurations()
                     return
                 }
                 if operation == 0x0d {
-                    message = String(format: "Nie wykryto żadnego VL53L4CD (ESP 0x%X).", result)
+                    message = String(format: "No VL53L4CD found (ESP 0x%X).", result)
                     return
                 }
-                message = String(format: "Polecenie Aury 0x%02X: błąd ESP 0x%X.", operation, result)
+                message = String(format: "Aura command 0x%02X: ESP error 0x%X.", operation, result)
                 if operation == 0x03 { torqueEnabled.toggle() }
                 return
             }
             switch operation {
             case 0x01:
-                message = "Skanowanie zakończone — znaleziono \(data[6]) serw."
-            case 0x02: message = "Odczyt serwa zakończony."
-            case 0x03: message = torqueEnabled ? "Moment serwa włączony." : "Moment serwa wyłączony."
-            case 0x04: message = "Pozycja wysłana do serwa."
-            case 0x05: message = "Bieżąca pozycja zapisana jako środek serwa."
+                message = "Scan done · \(data[6]) servos found."
+            case 0x02: message = "Servo read done."
+            case 0x03: message = torqueEnabled ? "Servo torque on." : "Servo torque off."
+            case 0x04: message = "Position sent to servo."
+            case 0x05: message = "Current position saved as servo centre."
             case 0x06:
                 selectedServo = Int(data[6])
-                message = "Nowy adres serwa: \(data[6])."
+                message = "New servo ID: \(data[6])."
                 scanServos()
-            case 0x07: message = "Polecenie LED wykonane."
+            case 0x07: message = "LED command done."
             case 0x2e:
                 ledBrightness = Double(data[6])
-                if ledBrightnessWrite { message = "Jasność paska zapisana w Aurze: \(data[6]) %." }
+                if ledBrightnessWrite { message = "Strip brightness saved on Aura: \(data[6]) %." }
                 ledBrightnessWrite = false
             case 0x09:
                 torqueEnabled = false
                 if let mode = ServoOperatingMode(rawValue: data[6]) { operatingMode = mode }
-                message = "Tryb \(operatingMode.title) zapisany. Moment serwa jest wyłączony."
+                message = "\(operatingMode.title) mode saved. Servo torque is off."
             case 0x0a:
                 torqueEnabled = data[6] != 0
-                message = torqueEnabled ? "Motor pracuje z zadaną prędkością." : "Motor zatrzymany, moment wyłączony."
-            case 0x0b: message = "Konfiguracja VL53L4CD zapisana i zastosowana."
+                message = torqueEnabled ? "Motor running at the set speed." : "Motor stopped, torque off."
+            case 0x0b: message = "VL53L4CD configuration saved and applied."
             case 0x0c: break
             case 0x0d:
                 let count = Int(data[6])
-                message = count == 1 ? "Wykryto jeden VL53L4CD." : "Wykryto \(count) czujniki VL53L4CD."
+                message = count == 1 ? "One VL53L4CD found." : "\(count) VL53L4CD sensors found."
             case 0x0e:
-                message = "Korekta odległości zapisana w czujniku i ESP."
+                message = "Distance offset saved in the sensor and ESP."
             case 0x10:
-                message = "Parametry optyczne VL53L4CD zapisane i zastosowane."
+                message = "VL53L4CD optical settings saved and applied."
             case 0x11:
-                message = "Wykonano aktualizację temperaturową VL53L4CD."
+                message = "VL53L4CD temperature update done."
             case 0x0f:
                 message = result == 0
                     ? String(format: "MPU6050 gotowy — WHO_AM_I 0x%02X.", data[6])
-                    : String(format: "MPU6050 nie odpowiedział — WHO_AM_I 0x%02X.", data[6])
+                    : String(format: "MPU6050 not responding · WHO_AM_I 0x%02X.", data[6])
             case 0x29:
                 message = data[6] != 0
-                    ? "Korekcja postawy zostanie użyta przy następnym uzbrojeniu."
-                    : "Korekcja postawy wyłączona."
+                    ? "Posture correction applies at the next arming."
+                    : "Posture correction off."
             case 0x2a:
-                message = "Limit korekcji postawy zapisany: \(data[6])°"
+                message = "Posture correction limit saved: \(data[6])°"
             case 0x2b:
-                message = "Profil chodu zapisany w Aurze. Zostanie użyty przy następnym kroku."
+                message = "Gait profile saved on Aura; used from the next step."
             case 0x2c:
-                message = "Strojenie ruchu zapisane w Aurze. Zostanie użyte przy następnym uzbrojeniu."
-            case 0x12: message = "Szukam DualSense. Przytrzymaj Create i PS, aż pasek zacznie migać."
-            case 0x13: message = "DualSense rozłączony."
-            case 0x14: message = "Łączenie z zapamiętanym padem…"
-            case 0x15: message = "Zapamiętane parowanie DualSense usunięte."
-            case 0x16: message = "Łączenie z wybranym urządzeniem…"
+                message = "Motion tuning saved on Aura; used at the next arming."
+            case 0x12: message = "Looking for DualSense. Hold Create and PS until the light bar blinks."
+            case 0x13: message = "DualSense disconnected."
+            case 0x14: message = "Connecting to the paired pad…"
+            case 0x15: message = "DualSense pairing removed."
+            case 0x16: message = "Connecting to the selected device…"
             case 0x17:
                 if robotConfigurationTotal != 0 {
                     robotConfigurationCompleted += 1
                     sendNextRobotAxisConfiguration()
                 } else {
-                    message = "Przypisanie osi zapisane w pamięci Aury."
+                    message = "Axis assignment saved on Aura."
                 }
-            case 0x18: message = data[6] != 0 ? "Serwa Aury uzbrojone." : "Serwa Aury rozbrojone."
+            case 0x18: message = data[6] != 0 ? "Aura servos armed." : "Aura servos disarmed."
             case 0x19:
                 let recordedSlot = Int(data[6])
                 if let captured = calibrationZeroInFlight,
@@ -1557,43 +1567,43 @@ final class AuraConnection: NSObject, ObservableObject {
                     completeCalibrationZero(captured)
                 } else if let captured = pendingCalibrationReference {
                     pendingCalibrationReference = nil
-                    message = "Referencja osi \(captured.axis + 1) została odczytana i zapisana bez ruchu."
+                    message = "Axis \(captured.axis + 1) reference read and saved without motion."
                 }
-            case 0x1a: message = "Wykonano pojedynczy test osi +12° i automatycznie wyłączono moment."
-            case 0x1b: message = "Moment wybranej osi jest wyłączony — można ją ustawić ręcznie."
+            case 0x1a: message = "Single +12° axis test done; torque released."
+            case 0x1b: message = "Axis released; it can be moved by hand."
             case 0x1c:
                 pendingCalibrationLimit = nil
-                message = "Krańcowa pozycja osi została zapisana w Aurze."
-            case 0x1d: message = "Stan testu kalibracyjnego nogi został zaktualizowany."
+                message = "Axis limit saved on Aura."
+            case 0x1d: message = "Leg test state updated."
             case 0x1e:
                 if let pending = pendingCalibrationTorque, result == 0 {
                     calibrationArmedLeg = pending.enabled ? pending.leg : nil
                 }
                 pendingCalibrationTorque = nil
                 message = calibrationArmedLeg == nil
-                    ? "Trzy serwa wybranej nogi są rozbrojone."
-                    : "Uzbrojone są wyłącznie trzy serwa wybranej nogi."
+                    ? "The leg's three servos are disarmed."
+                    : "Only the selected leg's three servos are armed."
             case 0x20:
-                message = "Kierunek osi został odwrócony przy pozycji referencyjnej. Moment pozostał wyłączony — wykonaj nowy test +12° dopiero po sprawdzeniu modelu."
+                message = "Axis direction reversed at the reference. Torque stays off; run a new +12° test after checking the model."
             case 0x21:
-                message = "Naprawiono wcześniejsze odwrócenie kierunku: znak został zachowany, a zero i krańce przeliczono przy referencji. Moment pozostał wyłączony."
+                message = "Older direction flip repaired: sign kept, zero and limits recomputed at the reference. Torque stays off."
             case 0x22:
-                message = "Automatyczne odwrócenie kierunku jest wyłączone."
+                message = "Automatic direction flip is disabled."
             case 0x23:
                 calibrationLivePreviewActive = pendingCalibrationPreview
                 message = calibrationLivePreviewActive
-                    ? "Podgląd pozycji TTL działa: tylko odczyt 12 serw, moment wyłączony."
-                    : "Podgląd pozycji TTL jest wyłączony."
+                    ? "TTL preview on: reading 12 servos, torque off."
+                    : "TTL preview off."
             case 0x24:
-                message = "Skasowano blokadę awaryjną. Serwa pozostają rozbrojone."
+                message = "Emergency stop cleared. Servos stay disarmed."
             case 0x25:
-                message = "Wysokość stania zapisana w Aurze. Przed uzbrojeniem sprawdź model."
+                message = "Stand height saved on Aura. Check the model before arming."
             case 0x26:
-                message = "Długość, wysokość i szybkość kroku 1× zapisane w Aurze."
+                message = "Crawl stride, height and speed saved on Aura."
             case 0x28:
-                message = "Rozstaw końców stóp zapisany w Aurze."
+                message = "Foot spread saved on Aura."
             case 0x1f:
-                message = "Pobrano konfigurację osi z Aury i zapisano kopię na komputerze."
+                message = "Axis configuration read from Aura; backup saved on this Mac."
             default: break
             }
         case 0x21:

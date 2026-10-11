@@ -11,21 +11,21 @@ enum CalibrationStep: Int, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .zero: "1. Zero"
-        case .direction: "2. Kierunek"
-        case .limits: "3. Krańce"
-        case .test: "4. Test nogi"
+        case .direction: "2. Direction"
+        case .limits: "3. Limits"
+        case .test: "4. Leg test"
         }
     }
     var instruction: String {
         switch self {
         case .zero:
-            "Ustaw nogę dokładnie jak w modelu po lewej. Moment jest wyłączony. Następnie Aura odczyta trzy rzeczywiste pozycje i zapisze je jako 0° tej nogi."
+            "Set the leg exactly as in the model. Torque is off. Aura then reads the three real positions and stores them as this leg's 0°."
         case .direction:
-            "Wybierz oś. Aura porusza wyłącznie nią o +12° od pozycji referencyjnej. Zielona strzałka pokazuje oczekiwany zwrot ruchu; zapis odwróconego kierunku sprawia, że ten sam test +12° idzie fizycznie w drugą stronę."
+            "Pick an axis. Aura moves only that axis +12° from the reference. The green arrow shows the expected direction; saving a reversed direction makes the same +12° test move the other way."
         case .limits:
-            "Zwolnij moment jednej osi, ustaw ją ręką na bezpiecznym krańcu ujemnym, zapisz. Następnie ustaw drugi kraniec i zapisz dodatni. Zapis trafia do limitów Aury."
+            "Release one axis, move it by hand to its safe negative end and save. Then move it to the other end and save the positive limit. Limits are stored on Aura."
         case .test:
-            "Aura steruje tylko wybraną nogą bez komputera. Lewy drążek góra/dół prowadzi mały cykl kroku, lewo/prawo sprawdza ab/ad. Zatrzymaj test przed przejściem dalej."
+            "Aura drives only the selected leg, without the Mac. Left stick up/down runs a small step cycle, left/right checks ab/ad. Stop the test before moving on."
         }
     }
 }
@@ -319,10 +319,10 @@ struct CalibrationView: View {
 
     private var legTitle: String {
         switch currentLeg {
-        case .lf: "FL • lewy przód"
-        case .lr: "RL • lewy tył"
-        case .rf: "FR • prawy przód"
-        case .rr: "RR • prawy tył"
+        case .lf: "FL • front left"
+        case .lr: "RL • rear left"
+        case .rf: "FR • front right"
+        case .rr: "RR • rear right"
         }
     }
 
@@ -392,7 +392,7 @@ struct CalibrationView: View {
     }
 
     private func axisLabel(_ index: Int) -> String {
-        RobotAxisID.allCases.indices.contains(index) ? RobotAxisID.allCases[index].rawValue : "Oś"
+        RobotAxisID.allCases.indices.contains(index) ? RobotAxisID.allCases[index].rawValue : "Axis"
     }
 
     var body: some View {
@@ -400,7 +400,7 @@ struct CalibrationView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center) {
                     StatusDot(color: aura.robotState.armed ? Theme.orange : Theme.green,
-                              text: aura.robotState.armed ? "Najpierw rozbrój serwa" : "Bezpieczna kalibracja · jedna noga naraz")
+                              text: aura.robotState.armed ? "Disarm the servos first" : "Safe calibration · one leg at a time")
                     Spacer()
                 }
 
@@ -433,11 +433,11 @@ struct CalibrationView: View {
                 }
 
                 if aura.robotState.armed {
-                    ContentUnavailableView("Rozbrój robota przed kalibracją", systemImage: "bolt.slash",
-                                           description: Text("Kalibrator nie może zmieniać zer ani krańców, gdy działa sterowanie 12 serw."))
+                    ContentUnavailableView("Disarm Aura before calibrating", systemImage: "bolt.slash",
+                                           description: Text("Zeros and limits cannot change while all 12 servos are under control."))
                 } else if !legReady {
-                    ContentUnavailableView("Przypisz trzy ID tej nogi", systemImage: "point.3.connected.trianglepath.dotted",
-                                           description: Text("W zakładce Robot przypisz unikalne serwa do Ab/ad, Hip i Knee, a następnie wróć tutaj."))
+                    ContentUnavailableView("Assign this leg's three IDs", systemImage: "point.3.connected.trianglepath.dotted",
+                                           description: Text("In Configuration, assign unique servos to Ab/ad, Hip and Knee, then come back."))
                 } else {
                     HStack(alignment: .top, spacing: 16) {
                         let liveReadPreview = aura.calibrationLivePreviewActive
@@ -457,19 +457,19 @@ struct CalibrationView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                                 .overlay(alignment: .bottomLeading) {
                                     Text(liveReadPreview
-                                         ? "Podgląd pozycji TTL całego robota • 12 odczytów, moment wyłączony"
+                                         ? "TTL preview · all 12 servos, torque off"
                                          : calibration.testRunning
-                                         ? "Test na padzie • \(currentLeg.displayCode) śledzi odczyt TTL Aury 50 Hz"
+                                         ? "Pad test · \(currentLeg.displayCode) follows Aura's 50 Hz TTL reading"
                                          : calibration.previewMode == .trot
-                                         ? "Ten sam chód do przodu co Quadruped • podświetlona noga: \(currentLeg.displayCode)"
-                                         : "Normalna pozycja stania • podświetlona noga: referencja \(calibrationReferenceText)")
+                                         ? "Forward walk as in Robot 3D · highlighted: \(currentLeg.displayCode)"
+                                         : "Standing · highlighted leg at reference \(calibrationReferenceText)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .padding(12)
                                 }
                                 .overlay(alignment: .topLeading) {
                                     if calibration.step == .direction {
-                                        Label("Zielona strzałka: oczekiwany ruch +12°",
+                                        Label("Green arrow: expected +12° move",
                                               systemImage: "arrow.turn.up.right")
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(.green)
@@ -485,41 +485,41 @@ struct CalibrationView: View {
                             Text("ID " + legAxes.map { String($0.servoID) }.joined(separator: ", "))
                                 .font(Theme.monoSmall).foregroundStyle(Theme.muted)
                             Text(calibration.step.instruction).foregroundStyle(.secondary)
-                            Picker("Podgląd modelu", selection: $calibration.previewMode) {
+                            Picker("Model preview", selection: $calibration.previewMode) {
                                 ForEach(CalibrationPreviewMode.allCases) { mode in
                                     Text(mode.title).tag(mode)
                                 }
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
-                            Button(liveReadPreview ? "Wyłącz podgląd pozycji TTL" : "Włącz podgląd pozycji TTL całego robota") {
+                            Button(liveReadPreview ? "Stop TTL preview" : "TTL preview, all legs") {
                                 aura.setCalibrationLivePreview(enabled: !liveReadPreview)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(AuraButtonStyle())
                             .disabled(aura.busy || aura.robotState.armed)
-                            .help("Odczytuje pozycje 12 serw bez uzbrajania i bez komend ruchu.")
+                            .help("Reads all 12 servo positions without arming or sending motion.")
                             Divider()
                             Button(aura.calibrationArmedLeg == currentLegIndex
-                                   ? "Rozbrój tę nogę" : "Uzbrój tylko tę nogę") {
+                                   ? "Disarm this leg" : "Arm this leg only") {
                                 aura.setCalibrationLegTorque(leg: currentLegIndex,
                                                              enabled: aura.calibrationArmedLeg != currentLegIndex)
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(AuraButtonStyle(prominent: true))
                             .disabled(aura.busy)
-                            .help("Tylko ID \(legAxes.map { String($0.servoID) }.joined(separator: ", ")); pozostałe serwa zostają rozbrojone.")
+                            .help("Only IDs \(legAxes.map { String($0.servoID) }.joined(separator: ", ")); all other servos stay disarmed.")
                             Divider()
                             stepControls
                         }
                         .frame(width: 290, alignment: .leading)
                     }
 
-                    GroupBox("Zapisane parametry \(legTitle)") {
+                    GroupBox("Stored · \(legTitle)") {
                         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                             GridRow {
-                                Text("Oś").foregroundStyle(.secondary)
+                                Text("Axis").foregroundStyle(.secondary)
                                 Text("ID").foregroundStyle(.secondary)
                                 Text("Zero").foregroundStyle(.secondary)
-                                Text("Kierunek").foregroundStyle(.secondary)
+                                Text("Direction").foregroundStyle(.secondary)
                                 Text("Min / Max").foregroundStyle(.secondary)
                             }
                             ForEach(legAxes) { axis in
@@ -563,9 +563,9 @@ struct CalibrationView: View {
     private var stepControls: some View {
         switch calibration.step {
         case .zero:
-            Text("Ustaw wszystkie trzy osie dokładnie na pozycję z modelu: Ab/ad 0°, Hip 0°, Knee \(String(format: "%+.0f°", kneeReferenceDegrees)).")
+            Text("Set all three axes exactly to the model pose: Ab/ad 0°, Hip 0°, Knee \(String(format: "%+.0f°", kneeReferenceDegrees)).")
                 .font(.callout)
-            Text("Samo ustawienie mechaniczne nie zapisuje kalibracji. Kliknij poniżej, aby Aura odczytała kolejno wszystkie trzy serwa.")
+            Text("Positioning alone saves nothing. Click below and Aura reads the three servos in turn.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 ForEach(0..<3, id: \.self) { axis in
@@ -574,116 +574,116 @@ struct CalibrationView: View {
                         .foregroundStyle(calibration.zeroRecorded[axis] ? .green : .secondary)
                 }
             }
-            Button("Zapisz pozycje referencyjne nogi") {
+            Button("Save leg reference") {
                 calibration.prepareZeroCapture()
                 aura.captureCalibrationZeros(leg: currentLegIndex)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AuraButtonStyle(prominent: true))
             .disabled(aura.busy)
             if calibration.zeroRecorded.allSatisfy({ $0 }) {
-                Text("Trzy pozycje referencyjne są zapisane w Aurze.")
+                Text("All three references are stored on Aura.")
                     .font(.caption).foregroundStyle(.green)
-                Button("Przejdź do kontroli kierunku") { calibration.beginDirection() }
-                    .buttonStyle(.borderedProminent)
+                Button("Continue to direction check") { calibration.beginDirection() }
+                    .buttonStyle(AuraButtonStyle(prominent: true))
             } else {
-                Text("Nie ruszaj nogi podczas trzech odczytów. Po trzech zielonych znacznikach pojawi się przycisk przejścia dalej.")
+                Text("Keep the leg still during the three reads. Continue appears after three green marks.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
         case .direction:
             axisPicker
             if let axis = currentAxis {
-                Text("Testujesz \(axis.axis.rawValue), serwo ID \(axis.servoID). Model pokazuje wyłącznie tę oś na żółto.")
+                Text("Testing \(axis.axis.rawValue), servo ID \(axis.servoID). Only this axis is yellow in the model.")
                     .font(.callout)
                 Text(directionProbeWasSent
-                     ? "Porównaj fizyczny ruch z modelem. Aura po teście sama wyłączyła moment tej osi. Jeśli ruch był przeciwny: ustaw oś ręcznie dokładnie na referencji z modelu, a potem zapisz odwrócony kierunek. Ten zapis nie wysyła ruchu. Kolejny test +12° uruchomisz osobnym kliknięciem."
-                     : "Model pokazuje oczekiwany zwrot zieloną strzałką. Wykonaj pojedynczy ruch +12° od pozycji referencyjnej i porównaj go z modelem.")
+                     ? "Compare the real move with the model. Aura released this axis after the test. If it moved the wrong way: set the axis by hand exactly to the model reference, then save the reversed direction. Saving sends no motion. Run the next +12° test with a separate click."
+                     : "The green arrow shows the expected direction. Run one +12° move from the reference and compare it with the model.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Wykonaj ruch +12°") { sendDirectionProbe() }
+                    Button("Move +12°") { sendDirectionProbe() }
                 }
                 .disabled(aura.busy || directionProbeWasSent)
-                Button("Zwolnij moment tej osi") { releaseDirectionAxis() }
-                .buttonStyle(.bordered)
+                Button("Release this axis") { releaseDirectionAxis() }
+                .buttonStyle(AuraButtonStyle())
                 .disabled(aura.busy)
-                Text("Test sprawdza tryb pozycyjny, fizyczny zakres 0…4095 i to, że oś stoi przy zapisanej referencji. Po osiągnięciu +12° albo wykryciu złego ruchu zawsze wyłącza moment. Gdy ruch był zły, ustaw oś ręcznie na referencji i dopiero wtedy zapisz odwrócony kierunek.")
+                Text("The test checks position mode, the 0…4095 range and that the axis sits at its stored reference. It always releases torque at +12° or on a wrong move. If the move was wrong, set the axis to the reference by hand before saving the reversed direction.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Zapisz odwrócony kierunek — bez ruchu") { flipDirectionAtManualReference() }
-                    .buttonStyle(.borderedProminent)
+                Button("Save reversed direction · no motion") { flipDirectionAtManualReference() }
+                    .buttonStyle(AuraButtonStyle(prominent: true))
                     .disabled(!directionProbeWasSent || aura.busy)
-                Text("Po zapisie kliknij osobno test +12°. Aura nie wykona automatycznego powrotu ani drugiego testu; pojedynczy test zatrzyma i rozbroi oś po dojściu do celu.")
+                Text("After saving, start the +12° test separately. Aura makes no automatic return or second test; a single test stops and releases the axis at its target.")
                     .font(.caption).foregroundStyle(.secondary)
                 Divider()
-                Text("Odzyskanie po poprzedniej wersji")
+                Text("Recovery from an older app version")
                     .font(.caption.weight(.semibold))
-                Text("Jeżeli poprzedni przycisk został kliknięty, gdy oś była już na +12°: zwolnij moment, ustaw ręcznie dokładnie referencję z modelu, a następnie zapisz ją bez zmiany znaku. To usuwa błąd przesunięcia o 12°.")
+                Text("If the previous button was clicked with the axis already at +12°: release torque, set the exact model reference by hand, then save it without changing the sign. This removes the 12° offset.")
                     .font(.caption).foregroundStyle(.orange)
-                Button("Przywróć referencję tej osi — bez ruchu") { recaptureCurrentAxisReference() }
-                    .buttonStyle(.bordered)
+                Button("Recapture axis reference · no motion") { recaptureCurrentAxisReference() }
+                    .buttonStyle(AuraButtonStyle())
                     .disabled(aura.busy)
-                Text("Zachowuje obecny kierunek i krańce; tylko odczytuje aktualny tick jako referencję. Użyj tego najpierw po starej zmianie wykonanej w pozycji +12°.")
+                Text("Keeps direction and limits; only reads the current tick as the reference. Use this first after an old change made at +12°.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Dla jeszcze starszej wersji, która odwracała znak bez przeliczenia krańców, użyj drugiej opcji po ręcznym ustawieniu referencji.")
+                Text("For an even older version that flipped the sign without recomputing limits, use the option below after setting the reference by hand.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Napraw poprzednią zmianę — bez ruchu") { repairLegacyDirectionFlipAtReference() }
-                    .buttonStyle(.bordered)
+                Button("Repair older flip · no motion") { repairLegacyDirectionFlipAtReference() }
+                    .buttonStyle(AuraButtonStyle())
                     .disabled(aura.busy)
-                Text("Ta opcja zachowuje obecny znak, ale przelicza zero i krańce tak, aby nowy test +12° wrócił do właściwej strony bez dojazdu do końca.")
+                Text("Keeps the current sign but recomputes zero and limits so the next +12° test moves the right way without reaching the end stop.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button(calibration.axisIndex == 2 ? "Kierunki gotowe → krańce" : "Kierunek poprawny → następna oś") {
+                Button(calibration.axisIndex == 2 ? "Directions done → limits" : "Direction OK → next axis") {
                     releaseDirectionAxis()
                     calibration.acceptDirection()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AuraButtonStyle(prominent: true))
                 .disabled(!directionProbeWasSent || aura.busy)
             }
 
         case .limits:
             axisPicker
             if let axis = currentAxis {
-                Text("Oś \(axis.axis.rawValue), ID \(axis.servoID). Najpierw zwolnij moment, przesuń ją ręką, potem zapisz krańce.")
+                Text("Axis \(axis.axis.rawValue), ID \(axis.servoID). Release it, move it by hand, then save the limits.")
                     .font(.callout)
-                Button("Zwolnij moment tej osi") {
+                Button("Release this axis") {
                     aura.releaseCalibrationAxis(leg: currentLegIndex, axis: calibration.axisIndex)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AuraButtonStyle())
                 HStack {
-                    Button("Zapisz kraniec −") {
+                    Button("Save − limit") {
                         aura.captureCalibrationLimit(leg: currentLegIndex, axis: calibration.axisIndex, maximum: false)
                     }
-                    Button("Zapisz kraniec +") {
+                    Button("Save + limit") {
                         aura.captureCalibrationLimit(leg: currentLegIndex, axis: calibration.axisIndex, maximum: true)
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AuraButtonStyle(prominent: true))
                 .disabled(aura.busy)
-                Text(String(format: "Aktualnie: %+.1f° … %+.1f°", axis.minimumDegrees, axis.maximumDegrees))
+                Text(String(format: "Current: %+.1f° … %+.1f°", axis.minimumDegrees, axis.maximumDegrees))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Button(calibration.axisIndex == 2 ? "Krańce gotowe → test nogi" : "Następna oś") {
+                Button(calibration.axisIndex == 2 ? "Limits done → leg test" : "Next axis") {
                     if calibration.axisIndex < 2 { calibration.axisIndex += 1 }
                     else { calibration.beginTest() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AuraButtonStyle(prominent: true))
             }
 
         case .test:
-            Text("Aura odczytuje DualSense i steruje tylko tą jedną nogą we własnej pętli 50 Hz. Model po lewej pokazuje cały wirtualny robot sterowany tym samym padem; wybrana noga jest zastąpiona jej rzeczywistymi kątami TTL.")
+            Text("Aura reads the DualSense and drives only this leg in its own 50 Hz loop. The model shows the whole virtual robot on the same pad; the selected leg uses its real TTL angles.")
                 .font(.callout)
             let telemetry = robot.telemetry[currentLegIndex]
             let angles = telemetry.present.allSatisfy { $0 } ? telemetry.measuredDegrees : telemetry.targetDegrees
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
                 GridRow { Text("TTL").foregroundStyle(.secondary); Text("Ab/ad"); Text("Hip"); Text("Knee") }
-                GridRow { Text(telemetry.present.allSatisfy { $0 } ? "odczyt" : "cel").foregroundStyle(.secondary); ForEach(0..<3, id: \.self) { index in Text(String(format: "%+.1f°", angles[index])).monospacedDigit() } }
+                GridRow { Text(telemetry.present.allSatisfy { $0 } ? "read" : "target").foregroundStyle(.secondary); ForEach(0..<3, id: \.self) { index in Text(String(format: "%+.1f°", angles[index])).monospacedDigit() } }
             }
             .font(.caption)
-            Button(calibration.testRunning ? "Zatrzymaj Trot jednej nogi" : "Włącz Trot jednej nogi z padem") {
+            Button(calibration.testRunning ? "Stop one-leg trot" : "Start one-leg trot with pad") {
                 let enabled = !calibration.testRunning
                 aura.setCalibrationLegTest(leg: currentLegIndex, enabled: enabled)
                 calibration.testRunning = enabled
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(AuraButtonStyle(prominent: true))
             .disabled(aura.busy)
-            Button("Zapisz nogę i przejdź dalej") {
+            Button("Save leg and continue") {
                 aura.setCalibrationLegTest(leg: currentLegIndex, enabled: false)
                 calibration.finishLeg()
             }
@@ -691,7 +691,7 @@ struct CalibrationView: View {
         }
 
         if calibration.step != .zero {
-            Button("Wstecz") { calibration.previousStep() }
+            Button("Back") { calibration.previousStep() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
         }
@@ -702,10 +702,10 @@ struct CalibrationView: View {
             ForEach(0..<3, id: \.self) { index in
                 if index == calibration.axisIndex {
                     Button(axisLabel(index)) { selectAxis(index) }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(AuraButtonStyle(prominent: true))
                 } else {
                     Button(axisLabel(index)) { selectAxis(index) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(AuraButtonStyle())
                 }
             }
         }

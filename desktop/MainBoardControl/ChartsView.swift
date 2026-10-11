@@ -66,7 +66,7 @@ struct TimeChart: View {
             .chartLegend(.hidden)
             .frame(height: height)
             .overlay {
-                if samples.isEmpty { Text("Brak danych").font(Theme.label).foregroundStyle(Theme.faint) }
+                if samples.isEmpty { Text("No data").font(Theme.label).foregroundStyle(Theme.faint) }
             }
         }
     }
@@ -88,54 +88,54 @@ enum ChartSets {
     static let legs = ["LF", "RF", "LR", "RR"]
 
     static func power(_ s: [TelemetrySample]) -> [TimeChart] {
-        [TimeChart(title: "Napięcie", unit: "V", samples: s,
+        [TimeChart(title: "Voltage", unit: "V", samples: s,
                    series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }]),
-         TimeChart(title: "Prąd serw", unit: "A", samples: s,
+         TimeChart(title: "Servo current", unit: "A", samples: s,
                    series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f"),
-         TimeChart(title: "Moc", unit: "W", samples: s,
+         TimeChart(title: "Power", unit: "W", samples: s,
                    series: [Series(name: "P", color: Theme.orange) { $0.power }], format: "%.1f")]
     }
 
     static func imu(_ s: [TelemetrySample]) -> [TimeChart] {
-        [TimeChart(title: "Przechył", unit: "°", samples: s, series: [
+        [TimeChart(title: "Tilt", unit: "°", samples: s, series: [
             Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
             Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f"),
-         TimeChart(title: "Korekcja postawy", unit: "°", samples: s, series: [
+         TimeChart(title: "Posture correction", unit: "°", samples: s, series: [
             Series(name: "roll", color: Theme.accent) { $0.correctionRoll },
             Series(name: "pitch", color: Theme.accent2Line) { $0.correctionPitch }], format: "%+.1f"),
-         TimeChart(title: "Żyroskop", unit: "°/s", samples: s, series: [
+         TimeChart(title: "Gyroscope", unit: "°/s", samples: s, series: [
             Series(name: "x", color: Theme.red) { $0.gyro.x },
             Series(name: "y", color: Theme.green) { $0.gyro.y },
             Series(name: "z", color: Theme.blue) { $0.gyro.z }], format: "%+.1f"),
-         TimeChart(title: "Przyspieszenie", unit: "g", samples: s, series: [
+         TimeChart(title: "Acceleration", unit: "g", samples: s, series: [
             Series(name: "x", color: Theme.red) { $0.accel.x },
             Series(name: "y", color: Theme.green) { $0.accel.y },
             Series(name: "z", color: Theme.blue) { $0.accel.z }], format: "%+.2f"),
-         TimeChart(title: "Temperatura IMU", unit: "°C", samples: s,
+         TimeChart(title: "IMU temperature", unit: "°C", samples: s,
                    series: [Series(name: "T", color: Theme.yellow) { $0.imuTemperature }], format: "%.1f")]
     }
 
     static func servos(_ s: [TelemetrySample]) -> [TimeChart] {
-        [TimeChart(title: "Temperatura serw (max w nodze)", unit: "°C", samples: s, series: (0..<4).map { leg in
+        [TimeChart(title: "Servo temperature (max per leg)", unit: "°C", samples: s, series: (0..<4).map { leg in
             Series(name: legs[leg], color: Theme.series[leg]) { legMax($0.servoTemperature, leg) } }, format: "%.0f"),
-         TimeChart(title: "Błąd śledzenia (max w nodze)", unit: "°", samples: s, series: (0..<4).map { leg in
+         TimeChart(title: "Tracking error (max per leg)", unit: "°", samples: s, series: (0..<4).map { leg in
             Series(name: legs[leg], color: Theme.series[leg]) { legMax($0.trackingError, leg, absolute: true) } },
                    format: "%.1f")]
     }
 
     static func gait(_ s: [TelemetrySample]) -> [TimeChart] {
-        [TimeChart(title: "Komenda", unit: "", samples: s, series: [
-            Series(name: "przód", color: Theme.accent) { $0.forward },
-            Series(name: "bok", color: Theme.accent2Line) { $0.lateral },
-            Series(name: "skręt", color: Theme.orange) { $0.turn }], format: "%+.2f"),
-         TimeChart(title: "Wysokość tułowia", unit: "mm", samples: s,
+        [TimeChart(title: "Command", unit: "", samples: s, series: [
+            Series(name: "forward", color: Theme.accent) { $0.forward },
+            Series(name: "lateral", color: Theme.accent2Line) { $0.lateral },
+            Series(name: "turn", color: Theme.orange) { $0.turn }], format: "%+.2f"),
+         TimeChart(title: "Torso height", unit: "mm", samples: s,
                    series: [Series(name: "h", color: Theme.teal) { $0.bodyHeight }], format: "%.0f"),
-         TimeChart(title: "Przesunięcie tułowia", unit: "mm", samples: s, series: [
+         TimeChart(title: "Torso shift", unit: "mm", samples: s, series: [
             Series(name: "x", color: Theme.blue) { $0.bodyShiftX },
             Series(name: "z", color: Theme.orange) { $0.bodyShiftZ }], format: "%+.1f"),
-         TimeChart(title: "Faza chodu", unit: "", samples: s,
+         TimeChart(title: "Gait phase", unit: "", samples: s,
                    series: [Series(name: "φ", color: Theme.purple) { $0.phase }], format: "%.2f"),
-         TimeChart(title: "Odometria", unit: "mm", samples: s, series: [
+         TimeChart(title: "Odometry", unit: "mm", samples: s, series: [
             Series(name: "x", color: Theme.blue) { $0.odometryX },
             Series(name: "z", color: Theme.orange) { $0.odometryZ }], format: "%.0f")]
     }
@@ -153,7 +153,7 @@ struct ChartsView: View {
         let samples = history.window(seconds: Double(window.rawValue), maximumPoints: 300)
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                TextTabs(tabs: [(.power, "Zasilanie"), (.imu, "IMU"), (.servos, "Serwa"), (.gait, "Chód")],
+                TextTabs(tabs: [(.power, "Power"), (.imu, "IMU"), (.servos, "Servos"), (.gait, "Gait")],
                          selection: $group)
                 Spacer()
                 Picker("", selection: $window) {
@@ -162,7 +162,7 @@ struct ChartsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 220)
-                Button(history.paused ? "Wznów" : "Pauza") { history.paused.toggle() }
+                Button(history.paused ? "Resume" : "Pause") { history.paused.toggle() }
                 Button("CSV") { exportCSV() }.disabled(history.count == 0)
             }
             .controlSize(.small)
@@ -170,7 +170,7 @@ struct ChartsView: View {
             .background(Theme.panel)
             Divider().overlay(Theme.line)
             if samples.isEmpty {
-                Placeholder(text: "Brak danych z Aury")
+                Placeholder(text: "No data from Aura")
             } else {
                 ScrollView {
                     let charts: [TimeChart] = switch group {
@@ -192,7 +192,7 @@ struct ChartsView: View {
     private func exportCSV() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "aura-telemetria.csv"
+        panel.nameFieldStringValue = "aura-telemetry.csv"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? history.csv().write(to: url, atomically: true, encoding: .utf8)
     }
@@ -216,48 +216,48 @@ struct OverviewView: View {
         let voltage = aura.power.servoBusVoltage
         Page {
             if !aura.isConnected && samples.isEmpty {
-                Placeholder(text: "Brak połączenia z Aurą").frame(height: 300)
+                Placeholder(text: "Not connected to Aura").frame(height: 300)
             } else {
                 if state.safetyFault.latched {
-                    Panel("Blokada awaryjna") {
+                    Panel("Safety stop") {
                         Text("\(state.safetyFault.legTitle) · \(state.safetyFault.axisTitle) · ID \(state.safetyFault.servoID) · "
-                             + String(format: "błąd %.1f° · %.2f A · obciążenie %.0f%%",
+                             + String(format: "error %.1f° · %.2f A · load %.0f%%",
                                       state.safetyFault.trackingErrorDegrees, state.safetyFault.currentAmperes,
                                       state.safetyFault.loadPercent))
                             .font(Theme.monoSmall).foregroundStyle(Theme.red)
                     }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)], spacing: 8) {
-                    Stat(label: "Bateria", value: String(format: "%.2f V · %.0f%%", voltage, batteryPercent),
+                    Stat(label: "Battery", value: String(format: "%.2f V · %.0f%%", voltage, batteryPercent),
                          tint: voltage <= 10 ? Theme.red : voltage < 11 ? Theme.orange : Theme.green)
-                    Stat(label: "Prąd", value: String(format: "%.2f A", aura.power.current))
-                    Stat(label: "Moc", value: String(format: "%.1f W", aura.power.power))
-                    Stat(label: "Zużycie", value: String(format: "%.0f mAh", aura.power.servoConsumedMilliampHours))
-                    Stat(label: "Tryb", value: AuraPadMode.title(state.selectedGait))
-                    Stat(label: "Serwa", value: state.safetyFault.latched ? "blokada" : state.armed ? "uzbrojone" : "rozbrojone",
+                    Stat(label: "Current", value: String(format: "%.2f A", aura.power.current))
+                    Stat(label: "Power", value: String(format: "%.1f W", aura.power.power))
+                    Stat(label: "Consumed", value: String(format: "%.0f mAh", aura.power.servoConsumedMilliampHours))
+                    Stat(label: "Mode", value: AuraPadMode.title(state.selectedGait))
+                    Stat(label: "Servos", value: state.safetyFault.latched ? "stopped" : state.armed ? "armed" : "disarmed",
                          tint: state.safetyFault.latched ? Theme.red : state.armed ? Theme.green : Theme.yellow)
                     Stat(label: "Roll / pitch", value: String(format: "%+.1f° %+.1f°",
                          aura.attitude.rollDegrees - aura.attitude.referenceRollDegrees,
                          aura.attitude.pitchDegrees - aura.attitude.referencePitchDegrees))
-                    Stat(label: "Temp. serw max", value: "\(maxTemperature) °C",
+                    Stat(label: "Servo temp max", value: "\(maxTemperature) °C",
                          tint: maxTemperature >= 65 ? Theme.red : maxTemperature >= 55 ? Theme.orange : Theme.text)
-                    Stat(label: "Wysokość", value: "\(state.bodyHeight) mm")
-                    Stat(label: "Pad", value: aura.dualSense.isConnected ? aura.dualSense.battery.map { "\($0)%" } ?? "połączony" : "brak",
+                    Stat(label: "Height", value: "\(state.bodyHeight) mm")
+                    Stat(label: "Controller", value: aura.dualSense.isConnected ? aura.dualSense.battery.map { "\($0)%" } ?? "connected" : "none",
                          tint: aura.dualSense.isConnected ? Theme.text : Theme.muted)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
-                    TimeChart(title: "Napięcie", unit: "V", samples: samples,
+                    TimeChart(title: "Voltage", unit: "V", samples: samples,
                               series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }])
-                    TimeChart(title: "Prąd serw", unit: "A", samples: samples,
+                    TimeChart(title: "Servo current", unit: "A", samples: samples,
                               series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f")
-                    TimeChart(title: "Przechył", unit: "°", samples: samples, series: [
+                    TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
                         Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
                         Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f")
-                    TimeChart(title: "Temperatura serw", unit: "°C", samples: samples, series: (0..<4).map { leg in
+                    TimeChart(title: "Servo temperature", unit: "°C", samples: samples, series: (0..<4).map { leg in
                         Series(name: ChartSets.legs[leg], color: Theme.series[leg]) { legMax($0.servoTemperature, leg) } },
                               format: "%.0f")
                 }
-                Panel("Osie") {
+                Panel("Axes") {
                     Grid(alignment: .trailing, horizontalSpacing: 18, verticalSpacing: 5) {
                         GridRow {
                             Text("").gridColumnAlignment(.leading)
@@ -269,7 +269,7 @@ struct OverviewView: View {
                         GridRow {
                             Text("")
                             ForEach(0..<3, id: \.self) { _ in
-                                Text("kąt"); Text("błąd"); Text("°C")
+                                Text("angle"); Text("error"); Text("°C")
                             }
                         }
                         .font(Theme.label).foregroundStyle(Theme.faint)

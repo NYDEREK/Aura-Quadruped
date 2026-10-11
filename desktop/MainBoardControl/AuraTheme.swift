@@ -202,3 +202,37 @@ struct Placeholder: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+// Flat button: raised neutral fill with light text; `prominent` uses the
+// purple accent with white text. `fill` stretches it to the available width.
+struct AuraButtonStyle: ButtonStyle {
+    var compact = false
+    var prominent = false
+    var fill = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        AuraButtonBody(configuration: configuration, compact: compact, prominent: prominent, fill: fill)
+    }
+}
+
+private struct AuraButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let compact: Bool
+    let prominent: Bool
+    let fill: Bool
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        let background: Color = prominent ? Theme.accent2.opacity(configuration.isPressed ? 0.75 : 1)
+            : configuration.isPressed ? Theme.line : Theme.raised.opacity(0.75)
+        configuration.label
+            .font(.system(size: compact ? 11 : 12, weight: prominent ? .medium : .regular))
+            .foregroundStyle(enabled ? (prominent ? Color.white : Theme.text) : Theme.faint)
+            .lineLimit(1)
+            .frame(maxWidth: fill ? .infinity : nil)
+            .padding(.horizontal, compact ? 8 : 11).padding(.vertical, compact ? 3 : 5)
+            .background(RoundedRectangle(cornerRadius: 4).fill(enabled ? background : Theme.panel))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(prominent && enabled ? .clear : Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+    }
+}

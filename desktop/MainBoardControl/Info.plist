@@ -8,18 +8,38 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Aura</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.9.0</string>
-    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleShortVersionString</key><string>2.0.0</string>
+    <key>CFBundleVersion</key><string>11</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Aura łączy się z płytką Aura Main Board, aby odczytywać czujniki i sterować serwami oraz LED-ami.</string>
+    <string>Aura connects to the Aura Main Board to read its sensors and drive the servos and LEDs.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Aura wyszukuje płytkę w sieci lokalnej i przesyła telemetrię oraz polecenia.</string>
+    <string>Aura finds the board on the local network and exchanges telemetry and commands with it.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key><true/>
     </dict>
     <key>NSBonjourServices</key><array><string>_aura._tcp</string></array>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Aura Session</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Owner</string>
+            <key>LSItemContentTypes</key><array><string>pl.nyderek.aura.session</string></array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>pl.nyderek.aura.session</string>
+            <key>UTTypeDescription</key><string>Aura Session</string>
+            <key>UTTypeConformsTo</key><array><string>public.json</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict><key>public.filename-extension</key><array><string>aura</string></array></dict>
+        </dict>
+    </array>
 </dict>
 </plist>

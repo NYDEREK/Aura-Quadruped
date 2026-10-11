@@ -15,16 +15,16 @@ enum CalibrationPreviewMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .still: "Pozycja referencyjna"
-        case .trot: "Chód (Trot)"
+        case .still: "Reference pose"
+        case .trot: "Walk (trot)"
         }
     }
 
     var isAnimated: Bool { self == .trot }
 }
 
-private enum QuadGait: String, CaseIterable {
-    case stand = "Stanie", crawl = "Krok 1×", trot = "Trot", run = "Run", climb = "Climb", tripod = "3 łapy"
+enum QuadGait: String, CaseIterable {
+    case stand = "Stand", crawl = "Crawl", trot = "Trot", run = "Run", climb = "Climb", tripod = "Tripod"
     var boardID: Int {
         switch self {
         case .stand: 0
@@ -50,7 +50,7 @@ private enum QuadGait: String, CaseIterable {
     }
 }
 
-private enum QuadLeg: String, CaseIterable, Identifiable {
+enum QuadLeg: String, CaseIterable, Identifiable {
     case frontLeft = "FL", frontRight = "FR", rearLeft = "RL", rearRight = "RR"
     var id: String { rawValue }
     // Firmware telemetry slots are LF, RF, LR, RR.
@@ -77,15 +77,15 @@ private enum QuadLeg: String, CaseIterable, Identifiable {
     }
     var title: String {
         switch self {
-        case .frontLeft: "Lewy przód (FL)"
-        case .frontRight: "Prawy przód (FR)"
-        case .rearLeft: "Lewy tył (RL)"
-        case .rearRight: "Prawy tył (RR)"
+        case .frontLeft: "Front left (FL)"
+        case .frontRight: "Front right (FR)"
+        case .rearLeft: "Rear left (RL)"
+        case .rearRight: "Rear right (RR)"
         }
     }
 }
 
-private struct QuadVector {
+struct QuadVector {
     var x: Double; var y: Double; var z: Double
     static func + (a: Self, b: Self) -> Self { .init(x: a.x + b.x, y: a.y + b.y, z: a.z + b.z) }
     static func - (a: Self, b: Self) -> Self { .init(x: a.x - b.x, y: a.y - b.y, z: a.z - b.z) }
@@ -94,7 +94,7 @@ private struct QuadVector {
     var isFinite: Bool { x.isFinite && y.isFinite && z.isFinite }
 }
 
-private struct LegPose: Identifiable {
+struct LegPose: Identifiable {
     let leg: QuadLeg; let yaw: Double; let hip: Double; let knee: Double; let points: [QuadVector]
     let grounded: Bool
     let footVelocity: QuadVector
@@ -103,7 +103,7 @@ private struct LegPose: Identifiable {
 
 // Result of an entirely local inverse-kinematics calculation.  The Test IK
 // tab uses it before a trajectory is ever sent to Aura.
-private struct IKProbeSolution {
+struct IKProbeSolution {
     let reachable: Bool
     let abduction: Double
     let hip: Double
@@ -111,14 +111,14 @@ private struct IKProbeSolution {
     let radialError: Double
 }
 
-private struct StaticCrawlStep {
+struct StaticCrawlStep {
     let bodyShift: Double
     let stroke: Double
     let lift: Double
     let airborne: Bool
 }
 
-private struct StaticCrawlPlan {
+struct StaticCrawlPlan {
     let swingLeg: QuadLeg
     let bodyShift: QuadVector
 }
@@ -127,7 +127,7 @@ private struct StaticCrawlPlan {
 // `reference` is the known mechanical pose and `target` differs by +12° in
 // exactly one joint, so the arrow describes an actual model rotation rather
 // than an arbitrary screen direction.
-private struct CalibrationDirectionGuide {
+struct CalibrationDirectionGuide {
     let leg: QuadLeg
     let axis: Int
     let reference: LegPose
@@ -136,7 +136,7 @@ private struct CalibrationDirectionGuide {
 
 // Equivalent to ElectroPup's visual "rings": every foot follows its own
 // circle around one instantaneous centre of rotation (CoR).
-private struct TurnGuide {
+struct TurnGuide {
     let center: QuadVector
     let radii: [QuadLeg: Double]
 }
@@ -145,7 +145,7 @@ private struct TurnGuide {
 // feet) from a line (the diagonal pair in trot).  A line has no static area:
 // it can only be held by dynamic balancing with an IMU, not by a geometric
 // foot path alone.
-private enum GravitySupportMode: String {
+enum GravitySupportMode: String {
     case stable
     case edge
     case dynamicLine
@@ -153,15 +153,15 @@ private enum GravitySupportMode: String {
 
     var title: String {
         switch self {
-        case .stable: "stabilny wielokąt podparcia"
-        case .edge: "mały margines podparcia"
-        case .dynamicLine: "dwie stopy — wymagany balans dynamiczny"
-        case .falling: "rzut środka masy poza podparciem"
+        case .stable: "stable"
+        case .edge: "low margin"
+        case .dynamicLine: "two feet · dynamic"
+        case .falling: "COM outside support"
         }
     }
 }
 
-private struct GravitySupport {
+struct GravitySupport {
     let mode: GravitySupportMode
     let contacts: Int
     // Positive means inside a support polygon.  For a two-foot support it is
@@ -171,7 +171,7 @@ private struct GravitySupport {
     let projectedCOM: QuadVector
 }
 
-private struct QuadrupedSnapshot {
+struct QuadrupedSnapshot {
     let gait: QuadGait
     // One global [0, 1) gait cycle. It lets the renderer retain exactly one
     // trajectory cycle instead of connecting samples from several laps.
@@ -192,7 +192,7 @@ private struct QuadrupedSnapshot {
     let gravity: GravitySupport
 }
 
-private final class QuadrupedModel: ObservableObject {
+final class QuadrupedModel: ObservableObject {
     private var bodyTrajectory = robot_body_trajectory_t()
     @Published var tripodExcluded = 3
     private struct SavedGeometry: Codable, Equatable {
@@ -300,7 +300,7 @@ private final class QuadrupedModel: ObservableObject {
     @Published var staticSupportMargin = 15.0 { didSet { saveStaticBalance() } }
     // Published slowly (rather than every rendered frame) so the inspector
     // does not compete with the 50 Hz SceneKit path.
-    @Published private(set) var gravityStatusText = "Grawitacja: oczekiwanie na kontakt stóp"
+    @Published private(set) var gravityStatusText = "waiting for foot contact"
     @Published private(set) var gravityMarginMm = 0.0
     @Published private(set) var gravityRollDegrees = 0.0
     @Published private(set) var gravityPitchDegrees = 0.0
@@ -422,7 +422,7 @@ private final class QuadrupedModel: ObservableObject {
         }
         // Stand is a true stationary reference in Test IK.  The main robot
         // intentionally turns Stand plus stick input into Trot, but carrying
-        // over a virtual stick while this picker says “Stanie” is confusing.
+        // over a virtual stick while this picker says “Stand” is confusing.
         if running && gait != .stand {
             // `input` maps left-Y with an inverted sign.
             pad.leftY = raw(-forward)
@@ -578,6 +578,16 @@ private final class QuadrupedModel: ObservableObject {
             y: 0,
             z: leg.left * (geometry.frameWidth / 2 - geometry.cornerInset + geometry.yawLink + geometry.lateralStance)
         )
+    }
+
+    // Test IK probe: Aura standing, one leg moved to the probe's joint angles.
+    func ikLabProbeSnapshot(at time: TimeInterval, leg: QuadLeg, angles: [Double]?) -> QuadrupedSnapshot {
+        selectedGait = .stand
+        spinMode = false
+        jumpStartedAt = nil
+        let standing = standingPreview(at: time)
+        guard let angles else { return standing }
+        return replacing(leg, in: standing, with: angles)
     }
 
     private func updateButtonEvents(_ pad: AuraDualSense, at time: TimeInterval) {
@@ -856,9 +866,9 @@ private final class QuadrupedModel: ObservableObject {
         let (support, _) = gravitySupport(for: contacts, projectedCOM: projection)
 
         gravityPublishElapsed += dt
-        if gravityPublishElapsed >= 0.10 || gravityStatusText.hasSuffix("oczekiwanie na kontakt stóp") {
+        if gravityPublishElapsed >= 0.10 || gravityStatusText.hasSuffix("waiting for foot contact") {
             gravityPublishElapsed = 0
-            gravityStatusText = "Podparcie: \(support.mode.title) • \(support.contacts) stopy • margines \(String(format: "%+.0f", support.margin)) mm"
+            gravityStatusText = "\(support.contacts) feet · \(String(format: "%+.0f", support.margin)) mm · \(support.mode.title)"
             gravityMarginMm = support.margin.isFinite ? support.margin : 0
             gravityRollDegrees = worldRoll * 180 / .pi
             gravityPitchDegrees = worldPitch * 180 / .pi
@@ -1431,6 +1441,11 @@ private final class QuadrupedHUDStore: ObservableObject {
 
 private final class QuadrupedScene: NSObject {
     let scene = SCNScene()
+    // Aura's IK frame (X forward, Y up, Z left) is the mirror of SceneKit's
+    // right-handed frame. Everything is drawn inside this Z-mirrored node, so
+    // the left legs appear on the robot's left and a left turn turns left.
+    // The camera stays outside it; inside, the mirror would cancel out.
+    let world: SCNNode = { let node = SCNNode(); node.scale = SCNVector3(1, 1, -1); return node }()
     let robot = SCNNode()
     // Fixed point for object-centred inspection. The robot itself is allowed
     // to follow the planned CoM trajectory around it.
@@ -1477,8 +1492,9 @@ private final class QuadrupedScene: NSObject {
 
     override init() {
         super.init(); scene.background.contents = Theme.canvasNS
-        scene.rootNode.addChildNode(robot)
-        scene.rootNode.addChildNode(presentationOrigin)
+        scene.rootNode.addChildNode(world)
+        world.addChildNode(robot)
+        world.addChildNode(presentationOrigin)
         scene.rootNode.addChildNode(cameraRig)
         camera.camera = SCNCamera(); camera.camera?.zFar = 3000
         camera.position = SCNVector3(400, 285, 440)
@@ -1488,24 +1504,26 @@ private final class QuadrupedScene: NSObject {
         centreOfMassMarker.geometry?.firstMaterial = material(.systemOrange, metal: 0.2)
         centreOfMassProjection.geometry?.firstMaterial = material(.systemOrange, metal: 0.1)
         robot.addChildNode(centreOfMassMarker)
-        scene.rootNode.addChildNode(centreOfMassProjection)
+        world.addChildNode(centreOfMassProjection)
     }
     private func material(_ color: NSColor, metal: CGFloat = 0) -> SCNMaterial {
-        let result = SCNMaterial(); result.diffuse.contents = color; result.metalness.contents = metal; result.roughness.contents = 0.32; return result
+        let result = SCNMaterial(); result.diffuse.contents = color; result.metalness.contents = metal; result.roughness.contents = 0.32
+        result.isDoubleSided = true    // the mirrored world flips face winding
+        return result
     }
     private func configureWorld() {
         let floor = SCNFloor(); floor.reflectivity = 0.02; floor.firstMaterial = material(NSColor(rgb: 0x232427), metal: 0.1)
         let floorNode = SCNNode(geometry: floor)
         self.floorNode = floorNode
-        scene.rootNode.addChildNode(floorNode)
+        world.addChildNode(floorNode)
         // A sparse grid gives scale without spending a render node on every
         // 60 mm division. The robot itself is the moving information here.
         for distance in stride(from: -480, through: 480, by: 120) {
-            let lineA = SCNNode(geometry: SCNBox(width: 0.7, height: 0.3, length: 1200, chamferRadius: 0)); lineA.geometry?.firstMaterial = material(NSColor(calibratedWhite: 0.28, alpha: 0.35)); lineA.position = SCNVector3(Float(distance), 0.2, 0); scene.rootNode.addChildNode(lineA); gridNodes.append(lineA)
-            let lineB = SCNNode(geometry: SCNBox(width: 1200, height: 0.3, length: 0.7, chamferRadius: 0)); lineB.geometry?.firstMaterial = material(NSColor(calibratedWhite: 0.28, alpha: 0.35)); lineB.position = SCNVector3(0, 0.2, Float(distance)); scene.rootNode.addChildNode(lineB); gridNodes.append(lineB)
+            let lineA = SCNNode(geometry: SCNBox(width: 0.7, height: 0.3, length: 1200, chamferRadius: 0)); lineA.geometry?.firstMaterial = material(NSColor(calibratedWhite: 0.28, alpha: 0.35)); lineA.position = SCNVector3(Float(distance), 0.2, 0); world.addChildNode(lineA); gridNodes.append(lineA)
+            let lineB = SCNNode(geometry: SCNBox(width: 1200, height: 0.3, length: 0.7, chamferRadius: 0)); lineB.geometry?.firstMaterial = material(NSColor(calibratedWhite: 0.28, alpha: 0.35)); lineB.position = SCNVector3(0, 0.2, Float(distance)); world.addChildNode(lineB); gridNodes.append(lineB)
         }
-        let ambient = SCNNode(); ambient.light = SCNLight(); ambient.light?.type = .ambient; ambient.light?.intensity = 600; scene.rootNode.addChildNode(ambient)
-        let key = SCNNode(); key.light = SCNLight(); key.light?.type = .omni; key.light?.intensity = 1350; key.position = SCNVector3(260, 420, 320); scene.rootNode.addChildNode(key)
+        let ambient = SCNNode(); ambient.light = SCNLight(); ambient.light?.type = .ambient; ambient.light?.intensity = 600; world.addChildNode(ambient)
+        let key = SCNNode(); key.light = SCNLight(); key.light?.type = .omni; key.light?.intensity = 1350; key.position = SCNVector3(260, 420, 320); world.addChildNode(key)
     }
     private func setWorldVisible(_ visible: Bool) {
         floorNode?.isHidden = !visible
@@ -1646,7 +1664,7 @@ private final class QuadrupedScene: NSObject {
             // Trail samples are ground-frame foot positions.  A planned
             // torso shift must move the body above a planted foot, not drag
             // that foot through the visual world.
-            let worldFoot = robot.convertPosition(pose.points[3].scn, to: nil)
+            let worldFoot = robot.convertPosition(pose.points[3].scn, to: world)
             let point = QuadVector(x: Double(worldFoot.x), y: Double(worldFoot.y), z: Double(worldFoot.z))
             if let last = samples.last, hypot(last.x - point.x, last.z - point.z) < 0.6,
                abs(last.y - point.y) < 0.6 {
@@ -1859,7 +1877,7 @@ private final class QuadrupedScene: NSObject {
         robot.eulerAngles = SCNVector3(Float(safeRoll), Float(renderYaw), Float(safePitch))
         let localCOM = model.centreOfMassLocal(bodyHeight: safeHeight)
         centreOfMassMarker.position = localCOM.scn
-        let worldCOM = robot.convertPosition(localCOM.scn, to: nil)
+        let worldCOM = robot.convertPosition(localCOM.scn, to: world)
         let projected = QuadVector(x: Double(worldCOM.x), y: 0, z: Double(worldCOM.z))
         centreOfMassProjection.position = SCNVector3(Float(projected.x), 1.1, Float(projected.z))
         let supportColor: NSColor = snapshot.gravity.mode == .stable ? .systemGreen :
@@ -1868,9 +1886,8 @@ private final class QuadrupedScene: NSObject {
         // An inspection view must stay fixed in the ground frame.  Moving
         // the camera rig with the torso made the planned CoM translation look
         // like a completely rigid body even though the renderer had applied it.
-        cameraRig.position = (lockPresentationToOrigin
-                              ? QuadVector(x: 0, y: 0, z: 0)
-                              : renderPosition).scn
+        let rigPosition = lockPresentationToOrigin ? QuadVector(x: 0, y: 0, z: 0) : renderPosition
+        cameraRig.position = SCNVector3(Float(rigPosition.x), Float(rigPosition.y), Float(-rigPosition.z))
         setWorldVisible(showWorld)
         for pose in snapshot.legs {
             guard let legRods = rods[pose.leg], let legJoints = joints[pose.leg], let foot = feet[pose.leg] else { continue }
@@ -1927,6 +1944,9 @@ private struct IKLabScene: NSViewRepresentable {
     let lateral: Double
     let turn: Double
     let playing: Bool
+    // Probe tab: Aura standing with this leg at the probe's joint angles
+    // (nil angles: the point is out of reach, the leg stays neutral).
+    let probe: (leg: QuadLeg, angles: [Double]?)?
     let time: TimeInterval
 
     final class Coordinator {
@@ -1936,10 +1956,10 @@ private struct IKLabScene: NSViewRepresentable {
             let view = SCNView()
             view.scene = renderer.scene
             view.pointOfView = renderer.camera
-            view.backgroundColor = .clear
+            view.backgroundColor = Theme.canvasNS
             configureSimulationCamera(view)
             view.autoenablesDefaultLighting = false
-            view.antialiasingMode = .none
+            view.antialiasingMode = .multisampling4X
             view.preferredFramesPerSecond = 60
             view.rendersContinuously = false
             return view
@@ -1953,12 +1973,16 @@ private struct IKLabScene: NSViewRepresentable {
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
-        let snapshot = model.ikLabSnapshot(at: time, gait: gait, forward: forward,
-                                           lateral: lateral, turn: turn,
-                                           running: playing)
-        context.coordinator.renderer.update(model, snapshot: snapshot,
-                                            lockPresentationToOrigin: true,
-                                            showFootTrails: true)
+        if let probe {
+            let snapshot = model.ikLabProbeSnapshot(at: time, leg: probe.leg, angles: probe.angles)
+            context.coordinator.renderer.update(model, snapshot: snapshot, calibrationHighlight: probe.leg,
+                                                lockPresentationToOrigin: true)
+        } else {
+            let snapshot = model.ikLabSnapshot(at: time, gait: gait, forward: forward,
+                                               lateral: lateral, turn: turn, running: playing)
+            context.coordinator.renderer.update(model, snapshot: snapshot,
+                                                lockPresentationToOrigin: true, showFootTrails: true)
+        }
         view.needsDisplay = true
     }
 }
@@ -1978,213 +2002,220 @@ private final class IKLabStore: ObservableObject {
     @Published var probeLift = 0.0
 }
 
+enum IKLabTab: String, Hashable { case pad, step, probe, model }
+
 struct IKLabView: View {
-    // Geometry stays local to the Mac.  Gait profiles are deliberately shared
-    // with the Quadruped tab so the same stride can be inspected here before
-    // it is stored on Aura while the robot is disarmed.
+    // Geometry stays local to the Mac.  Gait profiles are shared with Robot 3D
+    // and Aura, and are stored on Aura only while it is disarmed.
     @ObservedObject var aura: AuraConnection
     @StateObject private var model = QuadrupedModel(persistGeometry: false)
     @StateObject private var store = IKLabStore()
-
-    private func axisControl(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String = "") -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.caption).frame(width: 74, alignment: .leading)
-            Slider(value: value, in: range, step: range.upperBound <= 1 ? 0.01 : 1)
-            Text(String(format: range.upperBound <= 1 ? "%+.2f%@" : "%+.0f%@", value.wrappedValue, suffix))
-                .font(.caption.monospacedDigit())
-                .frame(width: 62, alignment: .trailing)
-        }
-    }
-
-    @ViewBuilder
-    private var gaitProfileEditor: some View {
-        GroupBox("Trajektoria kroku · wspólna z Quadruped") {
-            if store.gait == .stand {
-                Text("Stanie nie ma trajektorii kroku. Wybierz Trot, Krok 1×, Run albo Climb.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 280, alignment: .leading)
-            } else {
-                let gaitID = store.gait.boardID
-                let profile = aura.gaitProfile(gaitID)
-                let editable = !aura.robotState.armed
-                let stride = Binding<Double>(
-                    get: { Double(aura.gaitProfile(gaitID).strideMm) },
-                    set: { value in
-                        var changed = aura.gaitProfile(gaitID)
-                        changed.strideMm = Int(value.rounded())
-                        aura.replaceGaitProfileLocally(changed)
-                    })
-                let lift = Binding<Double>(
-                    get: { Double(aura.gaitProfile(gaitID).stepHeightMm) },
-                    set: { value in
-                        var changed = aura.gaitProfile(gaitID)
-                        changed.stepHeightMm = Int(value.rounded())
-                        aura.replaceGaitProfileLocally(changed)
-                    })
-                let maximumFrequency = (store.gait.isSingleFoot || store.gait == .tripod) ? 1.20 : 3.00
-                let frequency = Binding<Double>(
-                    get: { aura.gaitProfile(gaitID).frequencyHz },
-                    set: { value in
-                        var changed = aura.gaitProfile(gaitID)
-                        changed.frequencyCentiHz = Int((value * 100).rounded())
-                        aura.replaceGaitProfileLocally(changed)
-                    })
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text("Długość").font(.caption)
-                        Slider(value: stride, in: 15...300, step: 1, onEditingChanged: { editing in
-                            guard !editing, aura.isConnected, !aura.robotState.armed else { return }
-                            aura.setRobotGaitProfile(aura.gaitProfile(gaitID))
-                        })
-                        .disabled(!editable)
-                        Text("\(profile.strideMm) mm")
-                            .font(.caption.monospacedDigit())
-                            .frame(width: 55, alignment: .trailing)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Wysokość kroku").font(.caption)
-                        Slider(value: lift, in: 5...100, step: 1, onEditingChanged: { editing in
-                            guard !editing, aura.isConnected, !aura.robotState.armed else { return }
-                            aura.setRobotGaitProfile(aura.gaitProfile(gaitID))
-                        })
-                        .disabled(!editable)
-                        Text("\(profile.stepHeightMm) mm")
-                            .font(.caption.monospacedDigit())
-                            .frame(width: 55, alignment: .trailing)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Częstotliwość").font(.caption)
-                        Slider(value: frequency, in: 0.15...maximumFrequency, step: 0.05, onEditingChanged: { editing in
-                            guard !editing, aura.isConnected, !aura.robotState.armed else { return }
-                            aura.setRobotGaitProfile(aura.gaitProfile(gaitID))
-                        })
-                        .disabled(!editable)
-                        Text(String(format: "%.2f Hz", profile.frequencyHz))
-                            .font(.caption.monospacedDigit())
-                            .frame(width: 55, alignment: .trailing)
-                    }
-                    if aura.robotState.armed {
-                        Text("Rozbrój Aurę przed zmianą profilu").font(Theme.label).foregroundStyle(Theme.yellow)
-                    }
-                }
-                .frame(width: 280)
-            }
-        }
-    }
+    @AppStorage("aura.iklab.tab") private var tab: IKLabTab = .pad
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
-            let neutral = model.ikLabNeutralTarget(for: store.probeLeg)
-            let target = neutral + QuadVector(x: store.probeForward, y: store.probeLift, z: store.probeLateral)
-            let solution = model.ikLabProbe(leg: store.probeLeg, target: target)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Model lokalny · nie wysyła komend do Aury").font(Theme.label).foregroundStyle(Theme.muted)
-
-                    HStack(alignment: .top, spacing: 14) {
-                        IKLabScene(model: model, gait: store.gait, forward: store.forward,
-                                   lateral: store.lateral, turn: store.turn, playing: store.playing,
-                                   time: timeline.date.timeIntervalSinceReferenceDate)
-                            .frame(minWidth: 380, minHeight: 520)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(alignment: .bottomTrailing) {
-                                Button("Wycentruj") { model.resetCamera() }
-                                    .controlSize(.small)
-                                    .padding(10)
-                            }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            GroupBox("Wirtualny pad") {
-                                VStack(alignment: .leading, spacing: 9) {
-                                    Picker("Chód", selection: $store.gait) {
-                                        ForEach(QuadGait.allCases, id: \.self) { gait in
-                                            Text(gait.rawValue).tag(gait)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    if store.gait == .tripod {
-                                        Picker("Noga w powietrzu", selection: $model.tripodExcluded) {
-                                            ForEach(QuadLeg.allCases) { Text($0.title).tag($0.wireIndex) }
-                                        }
-                                    }
-                                    Toggle("Animacja", isOn: $store.playing)
-                                    if store.gait == .stand {
-                                        Text("Stanie utrzymuje neutralne pozycje — osie wirtualnego pada są wtedy celowo ignorowane.")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    } else {
-                                        axisControl("Przód", value: $store.forward, range: -1...1)
-                                        axisControl("Bok", value: $store.lateral, range: -1...1)
-                                        axisControl("Skręt", value: $store.turn, range: -1...1)
-                                    }
-                                }
-                                .frame(width: 280)
-                            }
-
-                            gaitProfileEditor
-
-                            GroupBox("Wymiary modelu") {
-                                VStack(spacing: 7) {
-                                    DimensionField(title: "Rama — długość", value: $model.frameLength)
-                                    DimensionField(title: "Rama — szerokość", value: $model.frameWidth)
-                                    DimensionField(title: "Wysokość stania", value: $model.bodyHeight)
-                                    DimensionField(title: "Yaw → hip", value: $model.yawLink)
-                                    DimensionField(title: "Hip → knee", value: $model.upperLeg)
-                                    DimensionField(title: "Knee → stopa", value: $model.lowerLeg)
-                                }
-                                .frame(width: 280)
-                            }
-                        }
-                    }
-
-                    GroupBox("Próbnik inverse kinematics") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Picker("Noga", selection: $store.probeLeg) {
-                                    ForEach(QuadLeg.allCases) { leg in Text(leg.title).tag(leg) }
-                                }
-                                .frame(width: 190)
-                                Spacer()
-                                Label(solution.reachable ? "Punkt osiągalny" : "Punkt poza zasięgiem",
-                                      systemImage: solution.reachable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(solution.reachable ? .green : .orange)
-                            }
-                            HStack(alignment: .top, spacing: 26) {
-                                VStack(alignment: .leading, spacing: 7) {
-                                    axisControl("Przód", value: $store.probeForward, range: -180...180, suffix: " mm")
-                                    axisControl("Bok", value: $store.probeLateral, range: -160...160, suffix: " mm")
-                                    axisControl("Podniesienie", value: $store.probeLift, range: 0...180, suffix: " mm")
-                                    Text(String(format: "Cel: x %+.0f • y %.0f • z %+.0f mm", target.x, target.y, target.z))
-                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                }
-                                Divider().frame(height: 86)
-                                if solution.reachable {
-                                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                                        GridRow { Text("Ab/ad").foregroundStyle(.secondary); Text(String(format: "%+.1f°", solution.abduction)).monospacedDigit() }
-                                        GridRow { Text("Hip").foregroundStyle(.secondary); Text(String(format: "%+.1f°", solution.hip)).monospacedDigit() }
-                                        GridRow { Text("Knee").foregroundStyle(.secondary); Text(String(format: "%+.1f°", solution.knee)).monospacedDigit() }
-                                    }
-                                } else {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Ten punkt nie ma rozwiązania dla aktualnych długości ogniw.")
-                                        Text(String(format: "Odchyłka równania: %.3f", solution.radialError))
-                                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                    }
-                                    .font(.caption)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 3)
-                    }
-                }
-                .padding()
+        let neutral = model.ikLabNeutralTarget(for: store.probeLeg)
+        let target = neutral + QuadVector(x: store.probeForward, y: store.probeLift, z: store.probeLateral)
+        let solution = model.ikLabProbe(leg: store.probeLeg, target: target)
+        let probe: (leg: QuadLeg, angles: [Double]?)? = tab == .probe
+            ? (store.probeLeg, solution.reachable ? [solution.abduction, solution.hip, solution.knee] : nil) : nil
+        HStack(spacing: 0) {
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+                IKLabScene(model: model, gait: store.gait, forward: store.forward,
+                           lateral: store.lateral, turn: store.turn, playing: store.playing,
+                           probe: probe, time: timeline.date.timeIntervalSinceReferenceDate)
             }
+            .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) {
+                IKLabOverlay(title: tab == .probe ? "IK PROBE · \(store.probeLeg.rawValue)" : store.gait.rawValue.uppercased(),
+                             detail: tab == .probe ? (solution.reachable ? "reachable" : "out of reach")
+                                                   : model.gravityStatusText,
+                             warning: tab == .probe && !solution.reachable)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button("Centre") { model.resetCamera() }
+                    .buttonStyle(AuraButtonStyle(compact: true))
+                    .padding(10)
+            }
+            Rectangle().fill(Theme.line).frame(width: 1)
+            VStack(spacing: 0) {
+                HStack {
+                    TextTabs(tabs: [(.pad, "Pad"), (.step, "Step"), (.probe, "IK probe"), (.model, "Model")],
+                             selection: $tab)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6).padding(.top, 8)
+                Rectangle().fill(Theme.line).frame(height: 1)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        switch tab {
+                        case .pad: IKLabPadTab(model: model, store: store)
+                        case .step: IKLabStepTab(aura: aura, gait: store.gait)
+                        case .probe: IKLabProbeTab(store: store, target: target, solution: solution)
+                        case .model: IKLabModelTab(model: model)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+            .frame(width: 300)
+            .background(Theme.canvas)
         }
         .onAppear { model.setLocomotionProfiles(aura.gaitProfiles) }
         .onChange(of: aura.gaitProfiles) { _, profiles in
             model.setLocomotionProfiles(profiles)
         }
+    }
+}
+
+private struct IKLabOverlay: View {
+    let title: String
+    let detail: String
+    let warning: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(Theme.monoSmall).foregroundStyle(Theme.text)
+            Text(detail).font(Theme.monoSmall).foregroundStyle(warning ? Theme.orange : Theme.muted)
+            Text("local model").font(Theme.monoSmall).foregroundStyle(Theme.faint)
+        }
+        .padding(8)
+        .background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+        .padding(10)
+    }
+}
+
+private struct IKLabPadTab: View {
+    @ObservedObject var model: QuadrupedModel
+    @ObservedObject var store: IKLabStore
+
+    var body: some View {
+        Panel("Gait") {
+            Picker("", selection: $store.gait) {
+                ForEach(QuadGait.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            if store.gait == .tripod {
+                Picker("Lifted leg", selection: $model.tripodExcluded) {
+                    ForEach(QuadLeg.allCases) { Text($0.rawValue).tag($0.wireIndex) }
+                }
+                .pickerStyle(.segmented)
+            }
+            Toggle("Animate", isOn: $store.playing)
+        }
+        Panel("Sticks", trailing: {
+            Button("Zero") { store.forward = 0; store.lateral = 0; store.turn = 0 }
+                .buttonStyle(AuraButtonStyle(compact: true))
+        }) {
+            ProfileSlider(title: "Forward", value: $store.forward, range: -1...1, step: 0.01,
+                          text: String(format: "%+.2f", store.forward), editable: store.gait != .stand) {}
+            ProfileSlider(title: "Lateral", value: $store.lateral, range: -1...1, step: 0.01,
+                          text: String(format: "%+.2f", store.lateral), editable: store.gait != .stand) {}
+            ProfileSlider(title: "Turn", value: $store.turn, range: -1...1, step: 0.01,
+                          text: String(format: "%+.2f", store.turn), editable: store.gait != .stand) {}
+        }
+    }
+}
+
+private struct IKLabStepTab: View {
+    @ObservedObject var aura: AuraConnection
+    let gait: QuadGait
+
+    var body: some View {
+        if gait == .stand {
+            Panel("Step") {
+                Text("No step in Stand.").font(Theme.label).foregroundStyle(Theme.muted)
+            }
+        } else {
+            let id = gait.boardID
+            let profile = aura.gaitProfile(id)
+            let editable = !aura.robotState.armed
+            let singleFoot = gait.isSingleFoot || gait == .tripod
+            Panel(gait.rawValue, trailing: {
+                Text(aura.robotState.armed ? "armed · locked" : "shared with Aura")
+                    .font(Theme.label).foregroundStyle(aura.robotState.armed ? Theme.yellow : Theme.faint)
+            }) {
+                ProfileSlider(title: "Stride", value: binding(id, \.strideMm), range: 15...300, step: 1,
+                              text: "\(profile.strideMm) mm", editable: editable) { save(id) }
+                ProfileSlider(title: "Step height", value: binding(id, \.stepHeightMm), range: 5...100, step: 1,
+                              text: "\(profile.stepHeightMm) mm", editable: editable) { save(id) }
+                ProfileSlider(title: "Frequency", value: Binding(
+                    get: { aura.gaitProfile(id).frequencyHz },
+                    set: { value in var changed = aura.gaitProfile(id)
+                        changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
+                              range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
+                              text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save(id) }
+            }
+        }
+    }
+
+    private func binding(_ id: Int, _ keyPath: WritableKeyPath<AuraGaitProfile, Int>) -> Binding<Double> {
+        Binding(get: { Double(aura.gaitProfile(id)[keyPath: keyPath]) },
+                set: { value in var changed = aura.gaitProfile(id)
+                    changed[keyPath: keyPath] = Int(value.rounded()); aura.replaceGaitProfileLocally(changed) })
+    }
+
+    // Same rule as before: stored on Aura only when connected and disarmed.
+    private func save(_ id: Int) {
+        guard aura.isConnected, !aura.robotState.armed else { return }
+        aura.setRobotGaitProfile(aura.gaitProfile(id))
+    }
+}
+
+private struct IKLabProbeTab: View {
+    @ObservedObject var store: IKLabStore
+    let target: QuadVector
+    let solution: IKProbeSolution
+
+    var body: some View {
+        Panel("Foot target", trailing: {
+            Button("Reset") { store.probeForward = 0; store.probeLateral = 0; store.probeLift = 0 }
+                .buttonStyle(AuraButtonStyle(compact: true))
+        }) {
+            Picker("", selection: $store.probeLeg) {
+                ForEach(QuadLeg.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            ProfileSlider(title: "Forward", value: $store.probeForward, range: -180...180, step: 1,
+                          text: String(format: "%+.0f mm", store.probeForward), editable: true) {}
+            ProfileSlider(title: "Lateral", value: $store.probeLateral, range: -160...160, step: 1,
+                          text: String(format: "%+.0f mm", store.probeLateral), editable: true) {}
+            ProfileSlider(title: "Lift", value: $store.probeLift, range: 0...180, step: 1,
+                          text: String(format: "%.0f mm", store.probeLift), editable: true) {}
+        }
+        Panel("Solution", trailing: {
+            Text(solution.reachable ? "reachable" : "out of reach")
+                .font(Theme.label).foregroundStyle(solution.reachable ? Theme.green : Theme.orange)
+        }) {
+            ValueRow(label: "Target x / y / z",
+                     value: String(format: "%+.0f / %.0f / %+.0f mm", target.x, target.y, target.z))
+            if solution.reachable {
+                ValueRow(label: "Ab/ad", value: String(format: "%+.1f°", solution.abduction))
+                ValueRow(label: "Hip", value: String(format: "%+.1f°", solution.hip))
+                ValueRow(label: "Knee", value: String(format: "%+.1f°", solution.knee))
+            } else {
+                ValueRow(label: "Residual", value: String(format: "%.3f", solution.radialError), tint: Theme.orange)
+            }
+        }
+    }
+}
+
+private struct IKLabModelTab: View {
+    @ObservedObject var model: QuadrupedModel
+
+    var body: some View {
+        Panel("Frame") {
+            DimensionField(title: "Length", value: $model.frameLength)
+            DimensionField(title: "Width", value: $model.frameWidth)
+            DimensionField(title: "Stand height", value: $model.bodyHeight)
+        }
+        Panel("Leg") {
+            DimensionField(title: "Yaw → hip", value: $model.yawLink)
+            DimensionField(title: "Hip → knee", value: $model.upperLeg)
+            DimensionField(title: "Knee → foot", value: $model.lowerLeg)
+        }
+        Text("Local to this tab; not saved.").font(Theme.label).foregroundStyle(Theme.faint)
     }
 }
 
@@ -2329,12 +2360,12 @@ struct QuadrupedView: View {
                 .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) { Robot3DOverlay(state: state) }
                 .overlay(alignment: .bottomTrailing) {
-                    Button("Wycentruj") { model.resetCamera() }.controlSize(.small).padding(10)
+                    Button("Centre") { model.resetCamera() }.buttonStyle(AuraButtonStyle(compact: true)).padding(10)
                 }
             Rectangle().fill(Theme.line).frame(width: 1)
             VStack(spacing: 0) {
                 HStack {
-                    TextTabs(tabs: [(.state, "Stan"), (.gait, "Chód"), (.setup, "Ustawienia"), (.geometry, "Geometria")],
+                    TextTabs(tabs: [(.state, "State"), (.gait, "Gait"), (.setup, "Setup"), (.geometry, "Geometry")],
                              selection: $tab)
                     Spacer(minLength: 0)
                 }
@@ -2372,14 +2403,14 @@ private struct Robot3DOverlay: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(state.calibrationLeg != nil ? "KALIBRACJA" : state.jumping ? "SKOK"
-                 : state.spinMode ? "OBRÓT" : AuraPadMode.title(state.selectedGait))
+            Text(state.calibrationLeg != nil ? "CALIBRATION" : state.jumping ? "JUMP"
+                 : state.spinMode ? "SPIN" : AuraPadMode.title(state.selectedGait))
                 .font(Theme.monoSmall).foregroundStyle(Theme.text)
-            Text(String(format: "faza %.2f · %d mm", state.phase, state.bodyHeight)
+            Text(String(format: "phase %.2f · %d mm", state.phase, state.bodyHeight)
                  + (state.effectiveFrequencyHz.map { String(format: " · %.2f Hz", $0) } ?? ""))
                 .font(Theme.monoSmall).foregroundStyle(Theme.muted)
             if state.constrainedLegMask != 0 {
-                Text("zakres: " + QuadLeg.allCases.filter { state.constrainedLegMask & (1 << $0.wireIndex) != 0 }
+                Text("limited: " + QuadLeg.allCases.filter { state.constrainedLegMask & (1 << $0.wireIndex) != 0 }
                         .map(\.rawValue).joined(separator: " "))
                     .font(Theme.monoSmall).foregroundStyle(Theme.orange)
             }
@@ -2396,18 +2427,18 @@ private struct Robot3DStateTab: View {
     var body: some View {
         let state = frame.state
         let contacts = frame.contacts
-        Panel("Komenda") {
-            ValueRow(label: "Przód", value: String(format: "%+.2f", state.forward))
-            ValueRow(label: "Bok", value: String(format: "%+.2f", state.lateral))
-            ValueRow(label: "Skręt", value: String(format: "%+.2f", state.turn))
-            ValueRow(label: "Wysokość", value: "\(state.bodyHeight) mm")
+        Panel("Command") {
+            ValueRow(label: "Forward", value: String(format: "%+.2f", state.forward))
+            ValueRow(label: "Lateral", value: String(format: "%+.2f", state.lateral))
+            ValueRow(label: "Turn", value: String(format: "%+.2f", state.turn))
+            ValueRow(label: "Height", value: "\(state.bodyHeight) mm")
         }
-        Panel("Odometria") {
+        Panel("Odometry") {
             ValueRow(label: "X / Z", value: String(format: "%.0f / %.0f mm", state.odometryX, state.odometryZ))
-            ValueRow(label: "Kurs", value: String(format: "%+.0f°", state.odometryYaw * 180 / .pi))
-            ValueRow(label: "Przesunięcie tułowia", value: String(format: "%+.1f / %+.1f mm", state.bodyShiftX, state.bodyShiftZ))
+            ValueRow(label: "Heading", value: String(format: "%+.0f°", state.odometryYaw * 180 / .pi))
+            ValueRow(label: "Body shift", value: String(format: "%+.1f / %+.1f mm", state.bodyShiftX, state.bodyShiftZ))
         }
-        Panel("Stopy") {
+        Panel("Feet") {
             if contacts.feedbackAvailable {
                 ForEach(QuadLeg.allCases) { leg in
                     let index = leg.wireIndex
@@ -2421,14 +2452,14 @@ private struct Robot3DStateTab: View {
                     }
                 }
             } else {
-                Text("Brak odczytu kontaktu").font(Theme.label).foregroundStyle(Theme.muted)
+                Text("No contact data").font(Theme.label).foregroundStyle(Theme.muted)
             }
-            ValueRow(label: "Korekcja stóp", value: state.swingBalanceActive ? "aktywna" : "—",
+            ValueRow(label: "Foot correction", value: state.swingBalanceActive ? "active" : "—",
                      tint: state.swingBalanceActive ? Theme.green : Theme.muted)
         }
         Panel("Pad") {
-            ValueRow(label: "Bateria", value: frame.controller.battery.map { "\($0)%" } ?? "—")
-            ValueRow(label: "Raporty", value: "\(frame.controller.sampleCount)")
+            ValueRow(label: "Battery", value: frame.controller.battery.map { "\($0)%" } ?? "—")
+            ValueRow(label: "Reports", value: "\(frame.controller.sampleCount)")
         }
     }
 }
@@ -2441,26 +2472,26 @@ private struct Robot3DGaitTab: View {
         let profile = aura.gaitProfile(model.configuredGait)
         let editable = aura.isConnected && !aura.robotState.armed
         let singleFoot = model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5
-        Panel("Profil chodu") {
+        Panel("Gait profile") {
             Picker("", selection: $model.configuredGait) {
                 ForEach(AuraGaitProfile.defaults) { Text($0.title).tag($0.gait) }
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            ProfileSlider(title: "Długość", value: binding(\.strideMm), range: 15...300, step: 1,
+            ProfileSlider(title: "Stride", value: binding(\.strideMm), range: 15...300, step: 1,
                           text: "\(profile.strideMm) mm", editable: editable) { save() }
-            ProfileSlider(title: "Wysokość", value: binding(\.stepHeightMm), range: 5...100, step: 1,
+            ProfileSlider(title: "Step height", value: binding(\.stepHeightMm), range: 5...100, step: 1,
                           text: "\(profile.stepHeightMm) mm", editable: editable) { save() }
-            ProfileSlider(title: "Częstotliwość", value: Binding(
+            ProfileSlider(title: "Frequency", value: Binding(
                 get: { aura.gaitProfile(model.configuredGait).frequencyHz },
                 set: { value in var changed = aura.gaitProfile(model.configuredGait)
                     changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
                           range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
                           text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save() }
-            ProfileSlider(title: "Kontakt", value: binding(\.dutyPercent), range: singleFoot ? 76...90 : 45...85, step: 1,
+            ProfileSlider(title: "Duty", value: binding(\.dutyPercent), range: singleFoot ? 76...90 : 45...85, step: 1,
                           text: "\(profile.dutyPercent)%", editable: editable) { save() }
         }
-        .help("Zapis tylko po rozbrojeniu. Tryb 4 używa własnego profilu z firmware.")
+        .help("Saved only while disarmed. Mode 4 uses its own firmware profile.")
     }
 
     private func binding(_ keyPath: WritableKeyPath<AuraGaitProfile, Int>) -> Binding<Double> {
@@ -2501,35 +2532,35 @@ private struct Robot3DSetupTab: View {
 
     var body: some View {
         let editable = aura.isConnected && !aura.robotState.armed
-        Panel("Stanie") {
-            ProfileSlider(title: "Wysokość tułowia", value: $model.bodyHeight, range: 120...250, step: 1,
+        Panel("Stance") {
+            ProfileSlider(title: "Body height", value: $model.bodyHeight, range: 120...250, step: 1,
                           text: "\(Int(model.bodyHeight.rounded())) mm", editable: editable) {
                 aura.setRobotBodyHeight(Int(model.bodyHeight.rounded()))
             }
-            ProfileSlider(title: "Rozstaw stóp", value: Binding(get: { model.finalFootSpreadMm },
+            ProfileSlider(title: "Foot spread", value: Binding(get: { model.finalFootSpreadMm },
                                                                 set: { model.finalFootSpreadMm = $0 }),
                           range: 170...430, step: 1, text: "\(Int(model.finalFootSpreadMm.rounded())) mm",
                           editable: editable) {
                 aura.setRobotLateralStance(Int(model.lateralStance.rounded()))
             }
         }
-        .help("Zapisywane w Aurze tylko po rozbrojeniu; nie wysyła ruchu.")
-        Panel("Środek masy") {
-            ProfileSlider(title: "Przód / tył", value: $model.staticComForward, range: -120...120, step: 1,
+        .help("Saved on Aura only while disarmed; sends no motion.")
+        Panel("Centre of mass") {
+            ProfileSlider(title: "Fore / aft", value: $model.staticComForward, range: -120...120, step: 1,
                           text: "\(Int(model.staticComForward.rounded())) mm", editable: editable) { saveBalance() }
-            ProfileSlider(title: "Lewo / prawo", value: $model.staticComLeft, range: -120...120, step: 1,
+            ProfileSlider(title: "Left / right", value: $model.staticComLeft, range: -120...120, step: 1,
                           text: "\(Int(model.staticComLeft.rounded())) mm", editable: editable) { saveBalance() }
-            ProfileSlider(title: "Margines podparcia", value: $model.staticSupportMargin, range: 5...45, step: 1,
+            ProfileSlider(title: "Support margin", value: $model.staticSupportMargin, range: 5...45, step: 1,
                           text: "\(Int(model.staticSupportMargin.rounded())) mm", editable: editable) { saveBalance() }
-            Button("Wycentruj") {
+            Button("Centre") {
                 model.staticComForward = 0; model.staticComLeft = 0
                 saveBalance()
             }
             .controlSize(.small)
             .disabled(!editable)
         }
-        .help("+ przód / lewo. Przesunięcie baterii względem środka ramy.")
-        Panel("Podparcie") {
+        .help("+ = forward / left. Battery offset from the frame centre.")
+        Panel("Support") {
             Text(model.gravityStatusText).font(Theme.label).foregroundStyle(Theme.muted)
         }
     }
@@ -2546,17 +2577,17 @@ private struct Robot3DGeometryTab: View {
     let legs: [AuraRobotLegTelemetry]
 
     var body: some View {
-        Panel("Rama") {
-            DimensionField(title: "Długość", value: $model.frameLength)
-            DimensionField(title: "Szerokość", value: $model.frameWidth)
-            DimensionField(title: "Odsunięcie narożnika", value: $model.cornerInset)
+        Panel("Frame") {
+            DimensionField(title: "Length", value: $model.frameLength)
+            DimensionField(title: "Width", value: $model.frameWidth)
+            DimensionField(title: "Corner inset", value: $model.cornerInset)
         }
-        Panel("Noga") {
+        Panel("Leg") {
             DimensionField(title: "Yaw → hip", value: $model.yawLink)
             DimensionField(title: "Hip → knee", value: $model.upperLeg)
-            DimensionField(title: "Knee → stopa", value: $model.lowerLeg)
+            DimensionField(title: "Knee → foot", value: $model.lowerLeg)
         }
-        Panel("Kąty osi") {
+        Panel("Joint angles") {
             Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 5) {
                 GridRow {
                     Text("").gridColumnAlignment(.leading)

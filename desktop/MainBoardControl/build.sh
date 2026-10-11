@@ -43,7 +43,7 @@ xcrun swiftc -parse-as-library -O \
     -framework Network -framework Charts \
     "$source_dir/MainBoardControl.swift" "$source_dir/AuraConnection.swift" "$source_dir/RobotControl.swift" "$source_dir/RobotTelemetry.swift" "$source_dir/QuadrupedView.swift" "$source_dir/CalibrationView.swift" "$source_dir/IMUAttitudePreview.swift" "$source_dir/FirmwareView.swift" \
     "$source_dir/AuraTheme.swift" "$source_dir/TelemetryHistory.swift" "$source_dir/ChartsView.swift" \
-    "$source_dir/RouteRecorder.swift" "$source_dir/RouteView.swift" "$source_dir/HeadingFilter.swift" \
+    "$source_dir/RouteRecorder.swift" "$source_dir/RouteView.swift" "$source_dir/HeadingFilter.swift" "$source_dir/SessionLogger.swift" "$source_dir/SessionsView.swift" \
     -o "$app_dir/Contents/MacOS/MainBoardControl"
 
 codesign --force --deep --sign - "$app_dir"

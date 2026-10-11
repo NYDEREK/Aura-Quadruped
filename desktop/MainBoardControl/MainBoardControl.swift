@@ -43,11 +43,11 @@ struct IMUView: View {
         Page {
             HStack(spacing: 12) {
                 StatusDot(color: available ? Theme.green : Theme.orange,
-                          text: available ? "MPU6050 · I²C 0x68 · S1" : "MPU6050 nie odpowiada")
+                          text: available ? "MPU6050 · I²C 0x68 · S1" : "MPU6050 not responding")
                 Text(String(format: "WHO_AM_I 0x%02X", aura.power.imuIdentity))
                     .font(Theme.monoSmall).foregroundStyle(Theme.muted)
                 Spacer()
-                Button("Sprawdź MPU6050") { aura.reinitializeIMU() }
+                Button("Check MPU6050") { aura.reinitializeIMU() }
                     .controlSize(.small)
                     .disabled(!aura.isConnected || aura.busy)
             }
@@ -55,24 +55,24 @@ struct IMUView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
                     Stat(label: "Roll", value: String(format: "%+.1f°", attitude.rollDegrees))
                     Stat(label: "Pitch", value: String(format: "%+.1f°", attitude.pitchDegrees))
-                    Stat(label: "Referencja", value: String(format: "%+.1f° %+.1f°",
+                    Stat(label: "Reference", value: String(format: "%+.1f° %+.1f°",
                                                              attitude.referenceRollDegrees, attitude.referencePitchDegrees))
-                    Stat(label: "Korekcja", value: String(format: "%+.1f° %+.1f°",
+                    Stat(label: "Correction", value: String(format: "%+.1f° %+.1f°",
                                                            attitude.correctionRollDegrees, attitude.correctionPitchDegrees))
-                    Stat(label: "Filtr", value: attitude.valid ? "gotowy" : "stabilizacja",
+                    Stat(label: "Filter", value: attitude.valid ? "ready" : "settling",
                          tint: attitude.valid ? Theme.green : Theme.yellow)
-                    Stat(label: "Temperatura", value: String(format: "%.1f °C", aura.imu.temperature))
+                    Stat(label: "Temperature", value: String(format: "%.1f °C", aura.imu.temperature))
                 }
                 HStack(alignment: .top, spacing: 12) {
-                    Panel("Orientacja") {
+                    Panel("Orientation") {
                         IMUAttitudePreview(rollDegrees: attitude.rollDegrees, pitchDegrees: attitude.pitchDegrees,
                                            valid: attitude.valid)
                             .frame(height: 240)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                    .help("Test znaku bez momentu: unieś przód — czerwona krawędź modelu idzie w górę; unieś lewy bok — lewa krawędź idzie w górę.")
-                    Panel("Korekcja postawy") {
-                        Toggle("Włączona po uzbrojeniu", isOn: Binding(
+                    .help("Sign test, torque off: lift the nose and the red edge rises; lift the left side and the left edge rises.")
+                    Panel("Posture correction") {
+                        Toggle("On after arming", isOn: Binding(
                             get: { aura.attitude.enabled }, set: { aura.setAttitudeBalance(enabled: $0) }))
                             .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
                         Picker("Limit", selection: Binding(
@@ -82,22 +82,22 @@ struct IMUView: View {
                         }
                         .pickerStyle(.segmented)
                         .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
-                        ValueRow(label: "Stan", value: attitude.referencePending ? "ustalanie referencji"
-                                 : attitude.active ? "aktywna" : "wyłączona",
+                        ValueRow(label: "State", value: attitude.referencePending ? "capturing reference"
+                                 : attitude.active ? "active" : "off",
                                  tint: attitude.active ? Theme.green : Theme.muted)
-                        ValueRow(label: "Próbki", value: "\(aura.imu.sampleCount)")
+                        ValueRow(label: "Samples", value: "\(aura.imu.sampleCount)")
                     }
                     .frame(width: 260)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
-                    TimeChart(title: "Przechył", unit: "°", samples: samples, series: [
+                    TimeChart(title: "Tilt", unit: "°", samples: samples, series: [
                         Series(name: "roll", color: Theme.accent) { $0.roll },
                         Series(name: "pitch", color: Theme.accent2Line) { $0.pitch }], format: "%+.1f")
-                    TimeChart(title: "Żyroskop", unit: "°/s", samples: samples, series: [
+                    TimeChart(title: "Gyroscope", unit: "°/s", samples: samples, series: [
                         Series(name: "x", color: Theme.red) { $0.gyro.x },
                         Series(name: "y", color: Theme.green) { $0.gyro.y },
                         Series(name: "z", color: Theme.blue) { $0.gyro.z }], format: "%+.1f")
-                    TimeChart(title: "Przyspieszenie", unit: "g", samples: samples, series: [
+                    TimeChart(title: "Acceleration", unit: "g", samples: samples, series: [
                         Series(name: "x", color: Theme.red) { $0.accel.x },
                         Series(name: "y", color: Theme.green) { $0.accel.y },
                         Series(name: "z", color: Theme.blue) { $0.accel.z }], format: "%+.2f")
@@ -116,55 +116,55 @@ struct ServoView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     if aura.servoIDs.isEmpty {
-                        Text("Brak wykrytych serw").font(Theme.body).foregroundStyle(Theme.muted)
+                        Text("No servos found").font(Theme.body).foregroundStyle(Theme.muted)
                     } else {
-                        Picker("Serwo", selection: $aura.selectedServo) {
+                        Picker("Servo", selection: $aura.selectedServo) {
                             ForEach(aura.servoIDs, id: \.self) { Text("ID \($0)").tag($0) }
                         }
                         .frame(maxWidth: 220)
                         .onChange(of: aura.selectedServo) { _, _ in aura.refreshServo() }
                     }
                     Spacer()
-                    Button("Skanuj 0…253") { aura.scanServos() }.disabled(aura.busy || !aura.isConnected)
+                    Button("Scan 0…253") { aura.scanServos() }.disabled(aura.busy || !aura.isConnected)
                 }
-                GroupBox("Sterowanie") {
+                GroupBox("Control") {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Button(aura.torqueEnabled ? "Wyłącz moment" : "Włącz moment") {
+                            Button(aura.torqueEnabled ? "Torque off" : "Torque on") {
                                 aura.setTorque(!aura.torqueEnabled)
                             }
-                            Button("Odczytaj") { aura.refreshServo() }
+                            Button("Read") { aura.refreshServo() }
                         }
-                        Picker("Tryb pracy", selection: $aura.operatingMode) {
+                        Picker("Mode", selection: $aura.operatingMode) {
                             ForEach(ServoOperatingMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
                         }
                         .pickerStyle(.segmented)
                         HStack {
-                            Button("Zapisz tryb \(aura.operatingMode.title) w serwie") {
+                            Button("Write \(aura.operatingMode.title) mode to servo") {
                                 aura.setOperatingMode()
                             }
                             .disabled(aura.busy || !aura.isConnected)
                         }
-                        HStack { Text("Przyspieszenie"); Slider(value: $aura.acceleration, in: 0...254); Text("\(Int(aura.acceleration))").monospacedDigit().frame(width: 45) }
+                        HStack { Text("Acceleration"); Slider(value: $aura.acceleration, in: 0...254); Text("\(Int(aura.acceleration))").monospacedDigit().frame(width: 45) }
                         if aura.operatingMode == .servo {
                             HStack {
-                                Button("Ustaw bieżącą pozycję jako środek") { aura.calibrateCenter() }
+                                Button("Set current position as centre") { aura.calibrateCenter() }
                             }
-                            HStack { Text("Kąt"); Slider(value: $aura.angle, in: 0...360); Text("\(Int(aura.angle))°").monospacedDigit().frame(width: 50) }
-                            HStack { Text("Prędkość ruchu"); Slider(value: $aura.speed, in: 0...3400); Text("\(Int(aura.speed))").monospacedDigit().frame(width: 55) }
-                            Button("Ustaw pozycję") { aura.moveServo() }.buttonStyle(.borderedProminent)
+                            HStack { Text("Angle"); Slider(value: $aura.angle, in: 0...360); Text("\(Int(aura.angle))°").monospacedDigit().frame(width: 50) }
+                            HStack { Text("Move speed"); Slider(value: $aura.speed, in: 0...3400); Text("\(Int(aura.speed))").monospacedDigit().frame(width: 55) }
+                            Button("Move") { aura.moveServo() }.buttonStyle(AuraButtonStyle(prominent: true))
                                 .disabled(aura.busy || !aura.isConnected)
                         } else {
                             HStack {
-                                Text("Prędkość motoru")
+                                Text("Motor speed")
                                 Slider(value: $aura.motorSpeed, in: -3400...3400)
                                 Text("\(Int(aura.motorSpeed))").monospacedDigit().frame(width: 65)
                             }
                             HStack {
-                                Button("Uruchom / ustaw prędkość") { aura.runMotor() }
-                                    .buttonStyle(.borderedProminent)
+                                Button("Run / set speed") { aura.runMotor() }
+                                    .buttonStyle(AuraButtonStyle(prominent: true))
                                     .disabled(aura.busy || !aura.isConnected || Int(aura.motorSpeed) == 0)
                                 Button("STOP", role: .destructive) { aura.stopMotor() }
                                     .keyboardShortcut(.escape, modifiers: [])
@@ -173,18 +173,18 @@ struct ServoView: View {
                         }
                         if let feedback = aura.feedback {
                             Divider()
-                            Text("Pozycja \(feedback.position) • \(String(format: "%.1f°", feedback.angle_deg)) • \(String(format: "%.1f V", feedback.voltage_v)) • \(feedback.temperature_c) °C")
-                            Text("Prędkość \(feedback.speed_raw) • obciążenie \(feedback.load_raw) • prąd raw \(feedback.current_raw)").foregroundStyle(.secondary)
+                            Text("Position \(feedback.position) • \(String(format: "%.1f°", feedback.angle_deg)) • \(String(format: "%.1f V", feedback.voltage_v)) • \(feedback.temperature_c) °C")
+                            Text("Speed \(feedback.speed_raw) • load \(feedback.load_raw) • current raw \(feedback.current_raw)").foregroundStyle(.secondary)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Nadawanie adresu") {
+                GroupBox("Servo ID") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Tylko jedno serwo na magistrali").font(Theme.label).foregroundStyle(Theme.yellow)
+                        Text("Only one servo on the bus").font(Theme.label).foregroundStyle(Theme.yellow)
                         HStack {
-                            Stepper("Obecny ID: \(aura.currentID)", value: $aura.currentID, in: 0...253)
-                            Stepper("Nowy ID: \(aura.newID)", value: $aura.newID, in: 0...253)
-                            Button("Nadaj adres") { aura.assignID() }
+                            Stepper("Current ID: \(aura.currentID)", value: $aura.currentID, in: 0...253)
+                            Stepper("New ID: \(aura.newID)", value: $aura.newID, in: 0...253)
+                            Button("Assign ID") { aura.assignID() }
                                 .disabled(aura.currentID == aura.newID || aura.busy || !aura.isConnected)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -199,7 +199,7 @@ struct LEDsView: View {
 
     var body: some View {
         Page {
-            Panel("Jasność paska") {
+            Panel("Strip brightness") {
                 HStack {
                     Slider(value: $aura.ledBrightness, in: 0...100, step: 5) { editing in
                         if !editing { aura.saveLEDBrightness() }
@@ -209,11 +209,11 @@ struct LEDsView: View {
                 .disabled(!aura.isConnected)
             }
             .frame(maxWidth: 480)
-            Panel("Diody") {
+            Panel("Pixels") {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                    GridRow { Text("1").foregroundStyle(Theme.muted); Text("stan: pomarańczowy rozbrojony · zielony uzbrojony · czerwony kalibracja · miga blokada") }
-                    GridRow { Text("2").foregroundStyle(Theme.muted); Text("tryb: 1 niebieski · 2 turkusowy · 3 fioletowy · 4 żółty · 5 różowy") }
-                    GridRow { Text("3–8").foregroundStyle(Theme.muted); Text("bateria 10,0–12,6 V · pomarańczowy < 11,0 V · czerwony ≤ 10,0 V") }
+                    GridRow { Text("1").foregroundStyle(Theme.muted); Text("state: orange disarmed · green armed · red calibration · blinking stop") }
+                    GridRow { Text("2").foregroundStyle(Theme.muted); Text("mode: 1 blue · 2 turquoise · 3 purple · 4 yellow · 5 pink") }
+                    GridRow { Text("3–8").foregroundStyle(Theme.muted); Text("battery 10.0–12.6 V · orange below 11.0 V · red at 10.0 V") }
                 }
                 .font(Theme.body).foregroundStyle(Theme.text)
             }
@@ -241,8 +241,8 @@ struct ToFFieldOfView: View {
     }
 
     private var proximityLabel: String {
-        guard let activeZone else { return sensor.valid ? "Poza strefami" : "—" }
-        return ["Czerwona", "Pomarańczowa", "Żółta", "Zielona"][activeZone]
+        guard let activeZone else { return sensor.valid ? "Out of zones" : "—" }
+        return ["Red", "Orange", "Yellow", "Green"][activeZone]
     }
 
     private var zoneLabels: [String] {
@@ -257,7 +257,7 @@ struct ToFFieldOfView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Strefy odległości")
+                Text("Distance zones")
                     .font(.headline)
                 Spacer()
                 Text(proximityLabel)
@@ -330,12 +330,12 @@ struct ToFSensorCard: View {
             VStack(alignment: .leading, spacing: 15) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Czujnik \(sensor.portNumber)").font(.title3.bold())
+                        Text("Sensor \(sensor.portNumber)").font(.title3.bold())
                         Text("Port \(sensor.portNumber) • XSHUT GPIO\(sensor.xshutGPIO)")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Label(sensor.present ? (sensor.ranging ? "Pomiar aktywny" : "Wykryty") : "Brak odpowiedzi",
+                    Label(sensor.present ? (sensor.ranging ? "Ranging" : "Detected") : "No response",
                           systemImage: sensor.present ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(sensor.present ? Color.green : Color.orange)
                 }
@@ -348,88 +348,88 @@ struct ToFSensorCard: View {
                     Spacer()
                     VStack(alignment: .trailing, spacing: 3) {
                         Text("Status: \(sensor.rangeStatus)")
-                        Text("Próbki: \(sensor.sampleCount)")
-                        Text(sensor.valid ? "wynik poprawny" : "wynik odrzucony")
+                        Text("Samples: \(sensor.sampleCount)")
+                        Text(sensor.valid ? "valid" : "rejected")
                     }
                     .font(.caption.monospacedDigit()).foregroundStyle(sensor.valid ? Color.secondary : Color.orange)
                 }
 
                 ToFFieldOfView(sensor: sensor, mountingYaw: mountingYaw, zoneLimits: zoneLimits)
                 HStack {
-                    Text("Kierunek montażu")
+                    Text("Mounting direction")
                     Slider(value: $mountingYaw, in: -180...180, step: 1)
                     Text(String(format: "%+.0f°", mountingYaw)).monospacedDigit().frame(width: 46)
                 }
-                GroupBox("Pomiar") {
+                GroupBox("Measurement") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Metric(title: "Sygnał / SPAD", value: "\(sensor.signalPerSpad) kcps")
-                            Metric(title: "Tło / SPAD", value: "\(sensor.ambientPerSpad) kcps")
+                            Metric(title: "Signal / SPAD", value: "\(sensor.signalPerSpad) kcps")
+                            Metric(title: "Ambient / SPAD", value: "\(sensor.ambientPerSpad) kcps")
                             Metric(title: "Sigma", value: "\(sensor.sigma) mm")
-                            Metric(title: "Aktywne SPAD", value: "\(sensor.activeSpads)")
+                            Metric(title: "Active SPADs", value: "\(sensor.activeSpads)")
                         }
-                        Toggle("Włącz pomiary", isOn: $sensor.enabled)
+                        Toggle("Enable ranging", isOn: $sensor.enabled)
                         Stepper(value: $sensor.address, in: 0x08...0x77) {
-                            Text(String(format: "Adres I²C: 0x%02X", sensor.address)).monospacedDigit()
+                            Text(String(format: "I²C address: 0x%02X", sensor.address)).monospacedDigit()
                         }
                         Stepper(value: $sensor.timingBudget, in: 10...200, step: 5) {
-                            Text("Budżet pomiaru: \(sensor.timingBudget) ms").monospacedDigit()
+                            Text("Timing budget: \(sensor.timingBudget) ms").monospacedDigit()
                         }
-                        Toggle("Pomiar ciągły", isOn: continuous)
+                        Toggle("Continuous", isOn: continuous)
                         if !continuous.wrappedValue {
                             Stepper(value: $sensor.intermeasurement,
                                     in: max(11, sensor.timingBudget + 1)...5000, step: 10) {
-                                Text("Okres pomiaru: \(sensor.intermeasurement) ms").monospacedDigit()
+                                Text("Period: \(sensor.intermeasurement) ms").monospacedDigit()
                             }
                         }
-                        Button("Zapisz podstawowe ustawienia", action: save)
-                            .buttonStyle(.borderedProminent)
+                        Button("Save settings", action: save)
+                            .buttonStyle(AuraButtonStyle(prominent: true))
                             .disabled(!isConnected || busy)
                     }
                 }
 
-                GroupBox("Kalibracja odległości") {
+                GroupBox("Distance calibration") {
                     VStack(alignment: .leading, spacing: 10) {
                         Stepper(value: $referenceDistance, in: 10...4000, step: 10) {
-                            Text("Rzeczywista odległość celu: \(referenceDistance) mm")
+                            Text("True target distance: \(referenceDistance) mm")
                         }
                         HStack {
-                            Button("Skalibruj z bieżącego pomiaru") { calibrate(referenceDistance) }
+                            Button("Calibrate from current reading") { calibrate(referenceDistance) }
                                 .disabled(!isConnected || busy || !sensor.valid)
-                            Button("Wyzeruj korektę", action: resetCalibration)
+                            Button("Reset offset", action: resetCalibration)
                                 .disabled(!isConnected || busy || sensor.offset == 0)
                         }
-                        Text("Korekta: \(sensor.offset >= 0 ? "+" : "")\(sensor.offset) mm")
+                        Text("Offset: \(sensor.offset >= 0 ? "+" : "")\(sensor.offset) mm")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
 
-                GroupBox("Filtry optyczne i detekcja") {
+                GroupBox("Optical filters and detection") {
                     VStack(alignment: .leading, spacing: 10) {
                         Stepper(value: $sensor.xtalkKcps, in: 0...128) {
                             Text("XTalk: \(sensor.xtalkKcps) kcps")
                         }
                         Stepper(value: $sensor.signalThresholdKcps, in: 0...16_384, step: 64) {
-                            Text("Minimalny sygnał: \(sensor.signalThresholdKcps) kcps")
+                            Text("Min signal: \(sensor.signalThresholdKcps) kcps")
                         }
                         Stepper(value: $sensor.sigmaThresholdMm, in: 0...16_383, step: 1) {
-                            Text("Maksymalna sigma: \(sensor.sigmaThresholdMm) mm")
+                            Text("Max sigma: \(sensor.sigmaThresholdMm) mm")
                         }
                         Divider()
-                        Toggle("Detekcja progu", isOn: $sensor.detectionEnabled)
+                        Toggle("Threshold detection", isOn: $sensor.detectionEnabled)
                         if sensor.detectionEnabled {
                             if sensor.intermeasurement == 0 {
-                                Label("Ustaw pomiar okresowy — detekcja progu wymaga okresu większego od budżetu.",
+                                Label("Use a periodic measurement: detection needs a period longer than the budget.",
                                       systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption).foregroundStyle(.orange)
                             }
                             Stepper(value: $sensor.detectionLowMm, in: 0...4000, step: 10) {
-                                Text("Dolny próg: \(sensor.detectionLowMm) mm")
+                                Text("Low threshold: \(sensor.detectionLowMm) mm")
                             }
                             Stepper(value: $sensor.detectionHighMm, in: 0...4000, step: 10) {
-                                Text("Górny próg: \(sensor.detectionHighMm) mm")
+                                Text("High threshold: \(sensor.detectionHighMm) mm")
                             }
-                            Picker("Warunek detekcji", selection: detectionMode) {
+                            Picker("Detection condition", selection: detectionMode) {
                                 ForEach(ToFDetectionWindow.allCases) { mode in
                                     Text(mode.title).tag(Int(mode.rawValue))
                                 }
@@ -437,20 +437,20 @@ struct ToFSensorCard: View {
                             .pickerStyle(.menu)
                         }
                         HStack {
-                            Button("Zapisz filtry i progi", action: saveTuning)
-                                .buttonStyle(.borderedProminent)
+                            Button("Save filters and thresholds", action: saveTuning)
+                                .buttonStyle(AuraButtonStyle(prominent: true))
                                 .disabled(!isConnected || busy)
-                            Button("Przywróć bezpieczne wartości", action: resetTuning)
+                            Button("Restore safe values", action: resetTuning)
                                 .disabled(!isConnected || busy)
                         }
                         Divider()
-                        Button("Aktualizuj kompensację temperatury", action: updateTemperature)
+                        Button("Update temperature compensation", action: updateTemperature)
                             .disabled(!isConnected || busy || !sensor.present)
                     }
                 }
 
                 if sensor.error != 0 && !sensor.present {
-                    Text(String(format: "Ostatni błąd ESP: 0x%X", sensor.error))
+                    Text(String(format: "Last ESP error: 0x%X", sensor.error))
                         .font(.caption.monospacedDigit()).foregroundStyle(.orange)
                 }
             }
@@ -475,34 +475,34 @@ struct ToFView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("VL53L4CD · wykryte: \(aura.detectedToFSensorIndices.count)")
+                    Text("VL53L4CD · detected: \(aura.detectedToFSensorIndices.count)")
                         .font(Theme.body).foregroundStyle(Theme.muted)
                     Spacer()
-                    Button("Wykryj S2 ponownie") { aura.reinitializeToF() }
+                    Button("Detect S2 again") { aura.reinitializeToF() }
                         .controlSize(.small)
                         .disabled(aura.busy || !aura.isConnected)
                 }
 
-                GroupBox("Strefy kolorów") {
+                GroupBox("Colour zones") {
                     VStack(alignment: .leading, spacing: 8) {
                         Stepper(value: $redZone, in: 10...max(10, orangeZone - 10), step: 10) {
-                            Text("Czerwona: do \(redZone) mm")
+                            Text("Red: up to \(redZone) mm")
                         }
                         Stepper(value: $orangeZone, in: redZone + 10...max(redZone + 10, yellowZone - 10), step: 10) {
-                            Text("Pomarańczowa: do \(orangeZone) mm")
+                            Text("Orange: up to \(orangeZone) mm")
                         }
                         Stepper(value: $yellowZone, in: orangeZone + 10...max(orangeZone + 10, greenZone - 10), step: 10) {
-                            Text("Żółta: do \(yellowZone) mm")
+                            Text("Yellow: up to \(yellowZone) mm")
                         }
                         Stepper(value: $greenZone, in: yellowZone + 10...4000, step: 10) {
-                            Text("Zielona: do \(greenZone) mm")
+                            Text("Green: up to \(greenZone) mm")
                         }
                     }
                     .monospacedDigit()
                 }
 
                 if aura.detectedToFSensorIndices.isEmpty {
-                    Text("Nie wykryto VL53L4CD na S2").font(Theme.body).foregroundStyle(Theme.muted)
+                    Text("No VL53L4CD on S2").font(Theme.body).foregroundStyle(Theme.muted)
                 } else {
                     ForEach(aura.detectedToFSensorIndices, id: \.self) { index in
                         ToFSensorCard(sensor: $aura.tofSensors[index],
@@ -599,7 +599,7 @@ struct DualSenseView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
                     StatusDot(color: statusColor, text: aura.dualSense.isConnected && !aura.dualSense.hasInput
-                              ? "Brak aktualnych danych" : aura.dualSense.state.title)
+                              ? "No current data" : aura.dualSense.state.title)
                     Spacer()
                     if aura.dualSense.state == .scanning || aura.dualSense.state == .connecting {
                         ProgressView().controlSize(.small)
@@ -607,23 +607,23 @@ struct DualSenseView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button("Połącz") { aura.connectSavedDualSense() }
-                        .buttonStyle(.borderedProminent)
+                    Button("Connect") { aura.connectSavedDualSense() }
+                        .buttonStyle(AuraButtonStyle(prominent: true))
                         .disabled(!aura.isConnected || aura.busy || !aura.dualSense.hasSavedController || aura.dualSense.isConnected)
-                    Button("Nowe parowanie") { aura.pairDualSense() }
+                    Button("New pairing") { aura.pairDualSense() }
                         .disabled(!aura.isConnected || aura.busy || aura.dualSense.isConnected)
-                    Button("Rozłącz") { aura.disconnectDualSense() }
+                    Button("Disconnect") { aura.disconnectDualSense() }
                         .disabled(!aura.isConnected || aura.busy || !aura.dualSense.isConnected)
                     Spacer()
-                    Button("Zapomnij") { aura.forgetDualSense() }
+                    Button("Forget") { aura.forgetDualSense() }
                         .disabled(!aura.isConnected || aura.busy || !aura.dualSense.hasSavedController || aura.dualSense.isConnected)
                 }
 
-                GroupBox("Urządzenia") {
+                GroupBox("Devices") {
                     if aura.dualSenseDevices.isEmpty {
                         Text(aura.dualSense.state == .scanning
-                             ? "Skanowanie trwa. Włącz tryb parowania: Create + PS."
-                             : "Naciśnij „Nowe parowanie”, aby zobaczyć urządzenia w pobliżu.")
+                             ? "Scanning. Pairing mode: hold Create + PS."
+                             : "Press New pairing to list nearby devices.")
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 4)
@@ -639,8 +639,8 @@ struct DualSenseView: View {
                                             .font(.caption.monospaced()).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Button("Wybierz") { aura.connectDualSense(device) }
-                                        .buttonStyle(.bordered)
+                                    Button("Select") { aura.connectDualSense(device) }
+                                        .buttonStyle(AuraButtonStyle())
                                         .disabled(!aura.isConnected || aura.busy || aura.dualSense.isConnected)
                                 }
                                 .padding(.vertical, 2)
@@ -651,9 +651,9 @@ struct DualSenseView: View {
 
                 GroupBox {
                     HStack {
-                        DualSenseStick(title: "Lewy", position: aura.dualSense.leftPosition)
+                        DualSenseStick(title: "Left", position: aura.dualSense.leftPosition)
                         Spacer(minLength: 28)
-                        DualSenseStick(title: "Prawy", position: aura.dualSense.rightPosition)
+                        DualSenseStick(title: "Right", position: aura.dualSense.rightPosition)
                     }
                     .frame(maxWidth: 340)
                     .padding(.vertical, 5)
@@ -662,11 +662,11 @@ struct DualSenseView: View {
                 HStack {
                     Metric(title: "L2", value: "\(aura.dualSense.leftTrigger)")
                     Metric(title: "R2", value: "\(aura.dualSense.rightTrigger)")
-                    Metric(title: "Bateria", value: batteryText)
-                    Metric(title: "Raporty", value: "\(aura.dualSense.sampleCount)")
+                    Metric(title: "Battery", value: batteryText)
+                    Metric(title: "Reports", value: "\(aura.dualSense.sampleCount)")
                 }
 
-                GroupBox("Przyciski") {
+                GroupBox("Buttons") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 4), spacing: 7) {
                         ForEach(aura.dualSense.buttonStates) { button in
                             DualSenseButtonTile(button: button)
@@ -676,7 +676,7 @@ struct DualSenseView: View {
                 }
 
                 if aura.dualSense.hasInput {
-                    Text("Raport HID \(String(format: "0x%02X", aura.dualSense.reportID))  •  \(aura.dualSense.reportLength) B")
+                    Text("HID report \(String(format: "0x%02X", aura.dualSense.reportID))  •  \(aura.dualSense.reportLength) B")
                         .font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
 
@@ -691,30 +691,31 @@ struct DualSenseView: View {
 }
 
 private enum AuraSection: String, CaseIterable, Identifiable {
-    case overview, charts, route, robot3d, robot, calibration, ikLab, servos, imu, pad, sensors, leds, firmware
+    case overview, charts, route, sessions, robot3d, robot, calibration, ikLab, servos, imu, pad, sensors, leds, firmware
 
     var id: Self { self }
     var title: String {
         switch self {
-        case .overview: "Pulpit"
-        case .charts: "Wykresy"
-        case .route: "Trasa"
+        case .overview: "Overview"
+        case .charts: "Charts"
+        case .route: "Route"
+        case .sessions: "Sessions"
         case .robot3d: "Robot 3D"
-        case .robot: "Konfiguracja"
-        case .calibration: "Kalibracja"
-        case .ikLab: "Test IK"
-        case .servos: "Serwa"
+        case .robot: "Configuration"
+        case .calibration: "Calibration"
+        case .ikLab: "IK Test"
+        case .servos: "Servos"
         case .imu: "IMU"
-        case .pad: "Pad"
-        case .sensors: "Czujniki"
+        case .pad: "Controller"
+        case .sensors: "Sensors"
         case .leds: "LED"
         case .firmware: "Firmware"
         }
     }
     static let groups: [(String, [AuraSection])] = [
-        ("Podgląd", [.overview, .charts, .route, .robot3d]),
+        ("Monitor", [.overview, .charts, .route, .sessions, .robot3d]),
         ("Robot", [.robot, .calibration, .ikLab, .servos]),
-        ("Płytka", [.imu, .pad, .sensors, .leds, .firmware]),
+        ("Board", [.imu, .pad, .sensors, .leds, .firmware]),
     ]
 }
 
@@ -770,16 +771,16 @@ private struct TopBar: View {
             Spacer(minLength: 8)
             if aura.isConnected {
                 StatusDot(color: state.safetyFault.latched ? Theme.red : state.armed ? Theme.green : Theme.yellow,
-                          text: state.safetyFault.latched ? "Blokada" : state.armed ? "Uzbrojony" : "Rozbrojony")
+                          text: state.safetyFault.latched ? "Fault" : state.armed ? "Armed" : "Disarmed")
                 Text(AuraPadMode.title(state.selectedGait)).font(Theme.label).foregroundStyle(Theme.muted)
                     .lineLimit(1)
                 Text(String(format: "%.2f V", voltage)).font(Theme.monoSmall)
                     .foregroundStyle(voltage <= 10 ? Theme.red : voltage < 11 ? Theme.orange : Theme.text)
             }
             StatusDot(color: aura.isConnected ? Theme.green : Theme.orange,
-                      text: aura.isConnected ? "Wi-Fi" : "Szukam Aury")
+                      text: aura.isConnected ? "Wi-Fi" : "Searching")
             if aura.busy { ProgressView().controlSize(.mini) }
-            Button("Połącz ponownie") { aura.reconnect() }.controlSize(.small)
+            Button("Reconnect") { aura.reconnect() }.buttonStyle(AuraButtonStyle(compact: true))
         }
         .padding(.horizontal, 14)
         .frame(height: 38)
@@ -799,9 +800,8 @@ private struct StatusBar: View {
                 Button("×") { aura.message = "" }.buttonStyle(.plain).foregroundStyle(Theme.muted)
             }
             Spacer(minLength: 8)
-            Text(aura.connectionText).font(Theme.label).foregroundStyle(Theme.faint).lineLimit(1)
             if aura.isConnected {
-                Text(String(format: "%.0f s", Double(aura.power.uptimeMilliseconds) / 1000))
+                Text(String(format: "up %.0f s", Double(aura.power.uptimeMilliseconds) / 1000))
                     .font(Theme.monoSmall).foregroundStyle(Theme.faint)
             }
         }
@@ -809,6 +809,17 @@ private struct StatusBar: View {
         .frame(height: 24)
         .background(Theme.panel)
         .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+}
+
+// Files opened from Finder (double-clicked .aura sessions).
+final class AuraAppDelegate: NSObject, NSApplicationDelegate {
+    static let openSession = Notification.Name("AuraOpenSession")
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.pathExtension == "aura" {
+            NotificationCenter.default.post(name: Self.openSession, object: url)
+        }
     }
 }
 
@@ -826,6 +837,7 @@ struct ContentView: View {
         case .overview: OverviewView()
         case .charts: ChartsView()
         case .route: RouteView()
+        case .sessions: SessionsView()
         case .robot3d: QuadrupedView(channel: aura.robotRenderChannel, aura: aura)
         case .robot: RobotControlView()
         case .calibration: CalibrationView()
@@ -854,21 +866,31 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .background(Theme.canvas)
         .preferredColorScheme(.dark)
+        .environment(\.locale, Locale(identifier: "en_US"))
         .tint(Theme.accent2)
+        .buttonStyle(AuraButtonStyle())
         .groupBoxStyle(AuraGroupBoxStyle())
         .environmentObject(aura)
         .environmentObject(aura.history)
         .environmentObject(aura.route)
+        .environmentObject(aura.sessions)
         .environmentObject(robot)
         .environmentObject(calibration)
         .onChange(of: aura.robotAxisBackup) { _, records in
             robot.applyAuraConfigurations(records)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AuraAppDelegate.openSession)) { note in
+            guard let url = note.object as? URL else { return }
+            aura.sessions.open(url)
+            navigation.section = .sessions
         }
     }
 }
 
 @main
 struct MainBoardControlApp: App {
+    @NSApplicationDelegateAdaptor(AuraAppDelegate.self) private var delegate
+
     init() { NSApplication.shared.appearance = NSAppearance(named: .darkAqua) }
 
     var body: some Scene {

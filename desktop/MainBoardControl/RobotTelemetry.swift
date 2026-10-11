@@ -14,8 +14,8 @@ struct AuraRobotSafetyFault: Equatable {
     var currentAmperes: Double { Double(abs(currentRaw)) * 0.0065 }
     var loadPercent: Double { Double(abs(loadRaw)) / 10.0 }
     var legTitle: String {
-        ["LF · lewy przód", "RF · prawy przód", "LR · lewy tył", "RR · prawy tył"]
-            .indices.contains(leg) ? ["LF · lewy przód", "RF · prawy przód", "LR · lewy tył", "RR · prawy tył"][leg] : "?"
+        ["LF · left front", "RF · right front", "LR · left rear", "RR · right rear"]
+            .indices.contains(leg) ? ["LF · left front", "RF · right front", "LR · left rear", "RR · right rear"][leg] : "?"
     }
     var axisTitle: String { ["Ab/ad", "Hip", "Knee"].indices.contains(axis) ? ["Ab/ad", "Hip", "Knee"][axis] : "?" }
 }
@@ -60,6 +60,20 @@ struct AuraRobotState: Equatable {
     var odometryZ = 0.0
     var odometryYaw = 0.0
     var safetyFault = AuraRobotSafetyFault()
+    var estimate = AuraEstimate()
+}
+
+// Aura's on-board Kalman estimate (frame 0x32): IK frame, X forward at the
+// last re-zero, Y up, Z left; heading > 0 is a left turn.
+struct AuraEstimate: Equatable {
+    var available = false          // the firmware sends frame 0x32
+    var valid = false
+    var still = false
+    var x = 0.0, y = 0.0, z = 0.0  // mm
+    var heading = 0.0              // rad
+    var forward = 0.0, left = 0.0  // mm/s in the heading frame
+    var gyroBias = 0.0             // deg/s
+    var speed: Double { (forward * forward + left * left).squareRoot() }
 }
 
 extension AuraRobotState {
@@ -87,6 +101,16 @@ extension AuraRobotState {
         bodyHeight = Int(i16(data, 13))
         tickCount = u32(data, 15)
         virtualInput = flags & 128 != 0
+    }
+    mutating func applyEstimateFrame(_ data: Data) {
+        guard data.count == 20, data[0] == 0x32 else { return }
+        estimate = AuraEstimate(
+            available: true, valid: data[1] & 1 != 0, still: data[1] & 2 != 0,
+            x: Double(Int32(bitPattern: u32(data, 2))) / 10, y: Double(i16(data, 10)),
+            z: Double(Int32(bitPattern: u32(data, 6))) / 10,
+            heading: Double(i16(data, 12)) * .pi / 18000,
+            forward: Double(i16(data, 14)), left: Double(i16(data, 16)),
+            gyroBias: Double(i16(data, 18)) / 1000)
     }
     mutating func applyBodyFrame(_ data: Data) {
         guard data.count == 20, data[0] == 0x31 else { return }
@@ -121,11 +145,11 @@ extension AuraRobotState {
 enum AuraPadMode {
     static func title(_ mode: Int) -> String {
         switch mode {
-        case 1: "1 · BALANS"
-        case 2: "2 · POZA TUŁOWIA"
-        case 3: "3 · CHÓD"
-        case 4: "4 · TRUCHT (TEST)"
-        case 5: "5 · STANIE"
+        case 1: "1 · BALANCE"
+        case 2: "2 · TORSO POSE"
+        case 3: "3 · WALK"
+        case 4: "4 · TROT (TEST)"
+        case 5: "5 · STAND"
         default: "—"
         }
     }

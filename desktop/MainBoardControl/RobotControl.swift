@@ -38,10 +38,10 @@ enum RobotLegID: String, CaseIterable, Codable, Identifiable {
     }
     var title: String {
         switch self {
-        case .lf: "Lewy przód"
-        case .rf: "Prawy przód"
-        case .lr: "Lewy tył"
-        case .rr: "Prawy tył"
+        case .lf: "Left front"
+        case .rf: "Right front"
+        case .lr: "Left rear"
+        case .rr: "Right rear"
         }
     }
 }
@@ -68,8 +68,8 @@ struct RobotAxisConfiguration: Identifiable, Codable, Equatable {
 
     var directionText: String { reversed ? "−" : "+" }
     var status: String {
-        guard assigned else { return "nieprzypisane" }
-        return measuredDegrees == nil ? "gotowe do testu" : "telemetria"
+        guard assigned else { return "unassigned" }
+        return measuredDegrees == nil ? "ready to test" : "telemetria"
     }
 }
 
@@ -267,27 +267,27 @@ private struct RobotAxisCard: View {
                     Text("\(axis.servoID)").monospacedDigit()
                 }
             }
-            Picker("Kierunek", selection: $axis.reversed) {
+            Picker("Direction", selection: $axis.reversed) {
                 Text("+").tag(false); Text("−").tag(true)
             }.pickerStyle(.segmented)
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 7) {
                 GridRow { Text("Zero").foregroundStyle(.secondary); TextField("", value: $axis.centerTick, format: .number).multilineTextAlignment(.trailing); Text("tick").foregroundStyle(.secondary) }
                 GridRow { Text("Min").foregroundStyle(.secondary); TextField("", value: $axis.minimumDegrees, format: .number.precision(.fractionLength(0))).multilineTextAlignment(.trailing); Text("°").foregroundStyle(.secondary) }
                 GridRow { Text("Max").foregroundStyle(.secondary); TextField("", value: $axis.maximumDegrees, format: .number.precision(.fractionLength(0))).multilineTextAlignment(.trailing); Text("°").foregroundStyle(.secondary) }
-                GridRow { Text("Prędkość").foregroundStyle(.secondary); TextField("", value: $axis.speedLimitRaw, format: .number).multilineTextAlignment(.trailing); Text("raw").foregroundStyle(.secondary) }
+                GridRow { Text("Speed").foregroundStyle(.secondary); TextField("", value: $axis.speedLimitRaw, format: .number).multilineTextAlignment(.trailing); Text("raw").foregroundStyle(.secondary) }
                 GridRow { Text("Accel").foregroundStyle(.secondary); TextField("", value: $axis.acceleration, format: .number).multilineTextAlignment(.trailing); Text("raw").foregroundStyle(.secondary) }
             }.font(.caption.monospacedDigit())
             Divider()
             let joint = RobotAxisID.allCases.firstIndex(of: axis.axis) ?? 0
-            Text(String(format: "Cel z Aury  %+.1f°", telemetry.targetDegrees[joint]))
+            Text(String(format: "Target   %+.1f°", telemetry.targetDegrees[joint]))
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             if telemetry.present[joint] {
-                Text(String(format: "Odczyt       %+.1f°  •  %d°C", telemetry.measuredDegrees[joint], telemetry.temperature[joint]))
+                Text(String(format: "Measured %+.1f°  •  %d°C", telemetry.measuredDegrees[joint], telemetry.temperature[joint]))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             } else if axis.assigned {
-                Text("Brak zwrotu z serwa").font(.caption).foregroundStyle(.orange)
+                Text("No servo feedback").font(.caption).foregroundStyle(.orange)
             }
-            Label(duplicateID ? "Ten ID jest przypisany drugi raz" : axis.status,
+            Label(duplicateID ? "This ID is assigned twice" : axis.status,
                   systemImage: duplicateID ? "exclamationmark.triangle.fill" : axis.assigned ? "checkmark.circle" : "circle")
                 .font(.caption).foregroundStyle(duplicateID ? .orange : .secondary)
         }
@@ -307,20 +307,20 @@ struct RobotControlView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center) {
                     StatusDot(color: aura.robotState.armed ? Theme.green : Theme.yellow,
-                              text: aura.robotState.armed ? "Serwa uzbrojone" : "Serwa rozbrojone")
+                              text: aura.robotState.armed ? "Servos armed" : "Servos disarmed")
                     Spacer()
-                    Button("Pobierz z Aury") { aura.requestRobotConfiguration() }
+                    Button("Read from Aura") { aura.requestRobotConfiguration() }
                         .disabled(!aura.isConnected || aura.busy)
-                    Button("Zapisz do Aury") { aura.configureRobot(robot.axes) }
+                    Button("Write to Aura") { aura.configureRobot(robot.axes) }
                         .disabled(!aura.isConnected || aura.robotState.armed)
-                        .help("Kopia na Macu: \(robot.backupPath)")
-                    Button(aura.robotState.armed ? "Rozbrój" : "Uzbrój 12 serw") {
+                        .help("Mac backup: \(robot.backupPath)")
+                    Button(aura.robotState.armed ? "Disarm" : "Arm 12 servos") {
                         aura.setRobotArmed(!aura.robotState.armed)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AuraButtonStyle(prominent: true))
                     .disabled(!aura.isConnected || aura.robotState.safetyFault.latched ||
                               (!aura.robotState.armed && !robot.isComplete))
-                    Button("Wyczyść") { robot.reset() }.buttonStyle(.bordered)
+                    Button("Clear") { robot.reset() }.buttonStyle(AuraButtonStyle())
                 }
 
                 if aura.robotState.safetyFault.latched {
@@ -330,43 +330,43 @@ struct RobotControlView: View {
                             Image(systemName: "exclamationmark.octagon.fill")
                                 .font(.title2).foregroundStyle(.red)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("Zatrzymanie awaryjne — moment wyłączony")
+                                Text("Safety stop — torque off")
                                     .font(.headline).foregroundStyle(.red)
-                                Text(String(format: "%@ · %@ · ID %d  |  %.2f A, %.0f%% PWM, błąd %.1f°",
+                                Text(String(format: "%@ · %@ · ID %d  |  %.2f A, %.0f%% PWM, error %.1f°",
                                             fault.legTitle, fault.axisTitle, fault.servoID,
                                             fault.currentAmperes, fault.loadPercent,
                                             fault.trackingErrorDegrees))
                                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                Text("Sprawdź nogę i mechanikę. Skasowanie blokady nie uzbraja serw ani nie wysyła ruchu.")
+                                Text("Check the leg and mechanics. Clearing does not arm or move anything.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Skasuj blokadę") { aura.clearRobotSafetyFault() }
-                                .buttonStyle(.bordered)
+                            Button("Clear stop") { aura.clearRobotSafetyFault() }
+                                .buttonStyle(AuraButtonStyle())
                                 .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
                         }
                         .padding(.vertical, 4)
                     } label: {
-                        Text("Ochrona serw")
+                        Text("Servo protection")
                     }
                 }
 
                 HStack(spacing: 10) {
-                    Button("Skanuj magistralę") { aura.scanServos() }
+                    Button("Scan bus") { aura.scanServos() }
                         .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
-                    Button("Wstaw wykryte ID") {
+                    Button("Use detected IDs") {
                         if !robot.assignDetectedServos(aura.servoIDs) {
-                            aura.message = "Do automatycznego przypisania potrzebne jest 12 różnych serw na magistrali."
+                            aura.message = "Auto assignment needs 12 distinct servos on the bus."
                         }
                     }
                     .disabled(!aura.isConnected || aura.servoIDs.count < 12 || aura.robotState.armed)
-                    Text("wykryte \(aura.servoIDs.count) / 12 · przypisane \(robot.assignedCount) / 12")
+                    Text("detected \(aura.servoIDs.count) / 12 · assigned \(robot.assignedCount) / 12")
                         .font(Theme.monoSmall).foregroundStyle(Theme.muted)
                 }
 
 
                 if aura.robotState.trackingLimited {
-                    Label(String(format: "Aura płynnie redukuje tempo kroku do %.0f%%, bo odczyt serw jest za celem.", aura.robotState.phaseRate * 100), systemImage: "speedometer")
+                    Label(String(format: "Aura slows the gait to %.0f%% while the servos lag their targets.", aura.robotState.phaseRate * 100), systemImage: "speedometer")
                         .font(.callout).foregroundStyle(.orange)
                 }
 
