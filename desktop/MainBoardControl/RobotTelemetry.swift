@@ -78,6 +78,18 @@ struct AuraHealth: Equatable {
     var gaitTickMaxMs = 0                                      // longest gait tick in the last 100 ms (budget 20)
     var stackAvailable = false
 
+    // Frame 0x35: longest time of each gait tick part in the last 100 ms and
+    // the board's free RAM.
+    static let sections = ["input", "posture", "planning", "joints", "estimator"]
+    var timingAvailable = false
+    var sectionMs = [Double](repeating: 0, count: sections.count)
+    var heapFree = 0, heapMinimum = 0
+    var slowestSection: (name: String, ms: Double) {
+        let index = sectionMs.indices.max { sectionMs[$0] < sectionMs[$1] } ?? 0
+        return (Self.sections[index], sectionMs[index])
+    }
+    static let lowHeapBytes = 10_000
+
     static let lowStackBytes = 512
     var lowStackTasks: [String] {
         Self.tasks.indices.filter { stackFree[$0] > 0 && stackFree[$0] < Self.lowStackBytes }.map { Self.tasks[$0] }

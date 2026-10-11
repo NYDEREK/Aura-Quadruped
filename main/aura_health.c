@@ -41,3 +41,18 @@ uint32_t aura_health_take_gait_tick_max_us(void)
     gait_tick_max_us = 0;
     return value;
 }
+
+static volatile uint32_t section_max_us[AURA_GAIT_SECTION_COUNT];
+
+void aura_health_gait_section_us(aura_gait_section_t section, uint32_t us)
+{
+    if (section < AURA_GAIT_SECTION_COUNT && us > section_max_us[section]) section_max_us[section] = us;
+}
+
+void aura_health_take_gait_sections_us(uint32_t out[AURA_GAIT_SECTION_COUNT])
+{
+    for (int i = 0; i < AURA_GAIT_SECTION_COUNT; ++i) {
+        out[i] = section_max_us[i];
+        section_max_us[i] = 0;
+    }
+}

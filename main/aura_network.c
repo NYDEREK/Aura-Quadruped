@@ -282,7 +282,7 @@ esp_err_t aura_network_start(aura_network_command_cb callback)
         mdns_instance_name_set("Aura Main Board");
         mdns_service_add(NULL, "_aura", "_tcp", AURA_PORT, NULL, 0);
     }
-    if (xTaskCreate(network_task, "aura_network", 4096, NULL, 4, &server_task) != pdPASS) {
+    if (xTaskCreate(network_task, "aura_network", 3072, NULL, 4, &server_task) != pdPASS) {
         aura_network_stop(); return ESP_ERR_NO_MEM;
     }
     return ESP_OK;

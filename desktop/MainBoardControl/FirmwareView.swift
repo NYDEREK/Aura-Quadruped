@@ -176,6 +176,12 @@ private struct BoardHealthPanel: View {
                     ValueRow(label: "Gait tick (budget 20 ms)", value: "\(health.gaitTickMaxMs) ms",
                              tint: health.gaitTickMaxMs > 20 ? Theme.red : health.gaitTickMaxMs > 14 ? Theme.orange : Theme.text)
                 }
+                if health.timingAvailable {
+                    ValueRow(label: "Tick parts", value: zip(AuraHealth.sections, health.sectionMs)
+                        .map { "\($0) \(String(format: "%.1f", $1))" }.joined(separator: " · "))
+                    ValueRow(label: "Free RAM / lowest", value: "\(health.heapFree / 1024) / \(health.heapMinimum / 1024) KB",
+                             tint: health.heapMinimum < AuraHealth.lowHeapBytes ? Theme.red : Theme.text)
+                }
                 ForEach(AuraHealth.tasks.indices, id: \.self) { task in
                     let rate = health.rates[task]
                     let stack = health.stackFree[task]

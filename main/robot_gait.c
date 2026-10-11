@@ -277,9 +277,13 @@ static struct {
     float reference_pitch_radians;
     float correction_roll_radians;
     float correction_pitch_radians;
+    int64_t last_fresh_us;   // last tick with a fresh IMU sample
 } attitude_control = {
     .enabled = true,
 };
+// A late IMU sample (the shared I2C bus was busy) holds the correction
+// for this long instead of dropping it to zero, which was a kick.
+#define ROBOT_ATTITUDE_GRACE_US 250000
 // The posture controller uses the same bounded-acceleration generator as a
 // joint command. A rate limiter alone changes velocity instantaneously when
 // IMU error changes, which appears as a kick at the foot during a gait.
@@ -1132,10 +1136,14 @@ static void update_attitude_controller(bool armed, bool moving, bool hold,
     state.attitude_reference_pitch_cdeg = attitude_control.reference_valid
         ? radians_to_cdeg_signed(attitude_control.reference_pitch_radians) : 0;
 
+    if (fresh) attitude_control.last_fresh_us = now_us;
+    const bool recent = fresh || (attitude_control.last_fresh_us > 0 &&
+                                  now_us - attitude_control.last_fresh_us <= ROBOT_ATTITUDE_GRACE_US);
     const bool usable = armed && attitude_control.enabled &&
-                        attitude_control.reference_valid && fresh;
-    if (usable && hold && attitude_control.active) {
-        // Correction and its trajectories stay where they are.
+                        attitude_control.reference_valid && recent;
+    if (usable && (!fresh || (hold && attitude_control.active))) {
+        // Correction and its trajectories stay where they are: holding a
+        // trot step, or waiting out one late IMU sample.
     } else if (!usable) {
         attitude_control.active = false;
         attitude_control.correction_roll_radians = 0.0f;
@@ -1613,8 +1621,18 @@ static void apply_trot_balance(robot_vec3_t world_feet[ROBOT_LEG_COUNT],
     state.trot_learned_com_z_mm = trot_learned_com.z;
 }
 
+// Gait tick sections, timed for the health telemetry (frame 0x35).
+static int64_t section_start_us;
+static void section_mark(aura_gait_section_t section)
+{
+    const int64_t now = esp_timer_get_time();
+    aura_health_gait_section_us(section, (uint32_t)(now - section_start_us));
+    section_start_us = now;
+}
+
 static void gait_tick(void)
 {
+    section_start_us = esp_timer_get_time();
     const gait_input_t input = read_input();
     if (calibration_test.enabled) {
         state.body_preview_active = false;
@@ -1671,6 +1689,7 @@ static void gait_tick(void)
 
     robot_model_t feedback = {0};
     robot_control_snapshot(&feedback);
+    section_mark(AURA_GAIT_SECTION_INPUT);
     const bool armed = robot_control_is_armed();
     if (!armed) {
         trajectory_initialized = false;
@@ -1727,6 +1746,7 @@ static void gait_tick(void)
         pose_mode ? -input.forward * ROBOT_POSE_MAX_PITCH_RAD : 0.0f,
         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
     update_attitude_controller(armed, active, trot_mode && active, pose_roll, pose_pitch);
+    section_mark(AURA_GAIT_SECTION_ATTITUDE);
     const float phase_rate = armed ? robot_gait_phase_rate(reference_error, has_feedback, feedback_error) : 1.0f;
 
     if (input.options && !options_was_pressed && !tripod_walk) {
@@ -1899,6 +1919,7 @@ static void gait_tick(void)
     state.tripod_walk_enabled = tripod_walk;
     state.tripod_walk_excluded = tripod_walk_excluded;
     state.constrained_leg_mask = 0;
+    section_mark(AURA_GAIT_SECTION_PLAN);
     for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
         robot_vec3_t target = body_pose_foot_target(world_feet[leg], body_height + jump_lift, body_pose);
         if (swing_balance && swing[leg]) {
@@ -1933,6 +1954,7 @@ static void gait_tick(void)
                                                            : ROBOT_GAIT_ACCELERATION);
         }
     }
+    section_mark(AURA_GAIT_SECTION_JOINTS);
     state.jumping = tripod_active ? false : jumping;
     state.tracking_limited = (use_static_crawl || tripod_active) && phase_rate < 0.995f;
     state.controller_connected = input.connected;
@@ -1949,6 +1971,7 @@ static void gait_tick(void)
     update_odometry(&feedback, armed, motion_active, tripod_active ? false : jumping,
                     spin || turning,
                     body_height + jump_lift);
+    section_mark(AURA_GAIT_SECTION_ESTIMATE);
     ++state.tick_count;
 }
 
@@ -2184,7 +2207,9 @@ esp_err_t robot_gait_arm(void)
         }
         if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
         attitude_control.reference_valid = false;
-        attitude_control.reference_pending = true;
+        // Not pending yet: the gait tick would see the robot still disarmed
+        // and cancel the capture before torque-on. Set after arming below.
+        attitude_control.reference_pending = false;
         attitude_control.reference_settled_ticks = 0;
         attitude_control.correction_roll_radians = 0.0f;
         attitude_control.correction_pitch_radians = 0.0f;
@@ -2209,11 +2234,19 @@ esp_err_t robot_gait_arm(void)
     xSemaphoreGive(gait_mutex);
     last_arm_preflight_slot = 0xff;
     const esp_err_t result = robot_control_arm();
-    if (result != ESP_OK && attitude_control.enabled &&
-        xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        attitude_control.reference_pending = false;
-        attitude_control.reference_settled_ticks = 0;
-        xSemaphoreGive(gait_mutex);
+    // The level reference is captured by the gait tick once the neutral
+    // stance has settled, now that the robot reads as armed.
+    if (result == ESP_OK && attitude_control.enabled) {
+        bool started = false;
+        for (int attempt = 0; attempt < 10 && !started; ++attempt) {
+            if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(50)) != pdTRUE) continue;
+            attitude_control.reference_valid = false;
+            attitude_control.reference_pending = true;
+            attitude_control.reference_settled_ticks = 0;
+            xSemaphoreGive(gait_mutex);
+            started = true;
+        }
+        if (!started) ESP_LOGE("robot_gait", "posture reference capture could not start");
     }
     return result;
 }
@@ -2472,9 +2505,10 @@ esp_err_t robot_gait_start(void)
 {
     if (!gait_mutex) return ESP_ERR_INVALID_STATE;
     if (gait_task) return ESP_OK;
-    // 8 KB: gait_tick alone has a 1 KB frame, and mode 4 adds the trot
-    // balance and body planner below it; 4 KB left almost no margin.
-    return xTaskCreate(gait_task_fn, "robot_gait", 8192, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+    // 6 KB: gait_tick alone has a 1 KB frame and mode 4 adds the trot balance
+    // and body planner below it; 4 KB left almost no margin, and 8 KB showed
+    // over 6 KB unused while RAM is short (~24 KB free with Wi-Fi and BT).
+    return xTaskCreate(gait_task_fn, "robot_gait", 6144, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot)

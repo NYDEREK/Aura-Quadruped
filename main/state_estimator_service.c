@@ -137,6 +137,6 @@ esp_err_t estimator_service_start(void)
 {
     if (task) return ESP_OK;
     robot_estimator_reset(&estimator);
-    return xTaskCreate(estimator_task, "state_estimator", 4096, NULL, 2, &task) == pdPASS
+    return xTaskCreate(estimator_task, "state_estimator", 3072, NULL, 2, &task) == pdPASS
         ? ESP_OK : ESP_ERR_NO_MEM;
 }

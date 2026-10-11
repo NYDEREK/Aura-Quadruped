@@ -40,3 +40,10 @@ CONFIG_BT_GATTS_ENABLE=n
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=n
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+
+# RAM is short with Classic BT and Wi-Fi both up (~24 KB free, dips to 3 KB
+# when the app connects). Telemetry is ten ~500-byte writes a second, so the
+# Wi-Fi buffers are cut well below the defaults.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16

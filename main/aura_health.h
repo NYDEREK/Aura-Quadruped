@@ -24,3 +24,16 @@ uint16_t aura_health_stack_free(aura_task_t task);
 // Longest gait tick since the last take, in microseconds (50 Hz budget: 20 ms).
 void aura_health_gait_tick_us(uint32_t us);
 uint32_t aura_health_take_gait_tick_max_us(void);
+
+// Parts of one gait tick, timed separately to find what makes it slow.
+typedef enum {
+    AURA_GAIT_SECTION_INPUT,      // pad input and servo feedback snapshot
+    AURA_GAIT_SECTION_ATTITUDE,   // IMU posture loop
+    AURA_GAIT_SECTION_PLAN,       // gait phase, foot and torso planning
+    AURA_GAIT_SECTION_JOINTS,     // IK and the twelve servo targets
+    AURA_GAIT_SECTION_ESTIMATE,   // estimator legs and odometry
+    AURA_GAIT_SECTION_COUNT
+} aura_gait_section_t;
+void aura_health_gait_section_us(aura_gait_section_t section, uint32_t us);
+// Longest time of each section since the last take, microseconds.
+void aura_health_take_gait_sections_us(uint32_t out[AURA_GAIT_SECTION_COUNT]);

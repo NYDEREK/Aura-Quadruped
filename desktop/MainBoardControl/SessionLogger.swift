@@ -204,6 +204,7 @@ final class SessionLogger: ObservableObject {
     private var reportedLowStack: Set<String> = []
     private var lastPosture = ""
     private var lastSlowTickEvent = -10.0
+    private var lastLowHeapEvent = -10.0
 
     private var cachedTrace: (id: UUID, trace: AuraSessionTrace?)?
 
@@ -244,6 +245,7 @@ final class SessionLogger: ObservableObject {
             reportedLowStack = []
             lastPosture = ""
             lastSlowTickEvent = -10
+            lastLowHeapEvent = -10
             lastFrameTime = nil
             lastModePosition = nil
             previous = nil
@@ -357,8 +359,16 @@ final class SessionLogger: ObservableObject {
         // The gait loop has 20 ms per tick; longer ticks starve lower tasks.
         if health.gaitTickMaxMs > 20 && t - lastSlowTickEvent > 1 {
             lastSlowTickEvent = t
+            let slowest = health.slowestSection
             events.append(AuraSessionEvent(t: t, kind: "gait tick slow",
-                                           detail: "\(health.gaitTickMaxMs) ms · mode \(mode)"))
+                                           detail: "\(health.gaitTickMaxMs) ms" +
+                                               (health.timingAvailable ? String(format: " · %@ %.1f ms", slowest.name, slowest.ms) : "") +
+                                               " · mode \(mode)"))
+        }
+        if health.timingAvailable && health.heapFree > 0 && health.heapFree < AuraHealth.lowHeapBytes && t - lastLowHeapEvent > 5 {
+            lastLowHeapEvent = t
+            events.append(AuraSessionEvent(t: t, kind: "low memory",
+                                           detail: "\(health.heapFree) B free · lowest \(health.heapMinimum) B · mode \(mode)"))
         }
         for task in Set(health.lowStackTasks).subtracting(reportedLowStack).sorted() {
             reportedLowStack.insert(task)

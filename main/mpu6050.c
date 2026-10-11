@@ -39,6 +39,12 @@ static i2c_master_dev_handle_t device;
 static uint8_t address;
 static imu_sample_t latest_sample;
 static mpu6050_attitude_t latest_attitude;
+// What readers get. Published at the end of each sample under a spinlock, so
+// mpu6050_get_attitude() never waits for the I2C transfer that `mutex`
+// covers. It used to give up after 5 ms and return zeros, which read as
+// "IMU not fresh" whenever the shared bus was busy.
+static portMUX_TYPE published_lock = portMUX_INITIALIZER_UNLOCKED;
+static mpu6050_attitude_t published_attitude;
 static attitude_filter_t filter;
 
 static int16_t decode_be16(const uint8_t *bytes)
@@ -89,6 +95,9 @@ static esp_err_t configure_locked(uint8_t *who_am_i)
     attitude_filter_reset(&filter);
     latest_sample = (imu_sample_t){0};
     latest_attitude = (mpu6050_attitude_t){0};
+    portENTER_CRITICAL(&published_lock);
+    published_attitude = latest_attitude;
+    portEXIT_CRITICAL(&published_lock);
     esp_err_t result = configure_interrupt_pin();
     if (result != ESP_OK) return result;
     result = board_i2c_init();
@@ -212,6 +221,9 @@ esp_err_t mpu6050_read(imu_sample_t *sample)
         .roll_rate_rad_s = next.gyro_dps[0] * 0.01745329252f,
         .pitch_rate_rad_s = next.gyro_dps[2] * 0.01745329252f,
     };
+    portENTER_CRITICAL(&published_lock);
+    published_attitude = latest_attitude;
+    portEXIT_CRITICAL(&published_lock);
     *sample = next;
     xSemaphoreGive(mutex);
     return ESP_OK;
@@ -220,8 +232,7 @@ esp_err_t mpu6050_read(imu_sample_t *sample)
 void mpu6050_get_attitude(mpu6050_attitude_t *attitude)
 {
     if (!attitude) return;
-    *attitude = (mpu6050_attitude_t){0};
-    if (!mutex || xSemaphoreTake(mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
-    *attitude = latest_attitude;
-    xSemaphoreGive(mutex);
+    portENTER_CRITICAL(&published_lock);
+    *attitude = published_attitude;
+    portEXIT_CRITICAL(&published_lock);
 }

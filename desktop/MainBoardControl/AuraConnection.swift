@@ -1368,6 +1368,12 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingRobotState.applyEstimateFrame(data)
         } else if data[0] == 0x33 {
             applyHealthFrame(data)
+        } else if data[0] == 0x35 {
+            guard data[1] == 1 else { return }
+            pendingHealth.timingAvailable = true
+            pendingHealth.sectionMs = (0..<AuraHealth.sections.count).map { Double(u16(data, 2 + $0 * 2)) / 10 }
+            pendingHealth.heapFree = Int(u32(data, 12))
+            pendingHealth.heapMinimum = Int(u32(data, 16))
         } else if data[0] == 0x34 {
             pendingHealth.stackAvailable = true
             pendingHealth.gaitTickMaxMs = Int(data[1])

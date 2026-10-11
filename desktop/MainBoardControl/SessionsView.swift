@@ -323,7 +323,7 @@ private struct EventList: View {
 
     private func tint(_ kind: String) -> Color {
         switch kind {
-        case "fault", "pad lost", "task stalled", "board restart", "low stack", "gait tick slow": Theme.red
+        case "fault", "pad lost", "task stalled", "board restart", "low stack", "gait tick slow", "low memory": Theme.red
         case "armed": Theme.green
         case "disarmed", "fault cleared": Theme.orange
         case "mode": Theme.accent
