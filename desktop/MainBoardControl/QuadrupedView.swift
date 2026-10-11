@@ -321,6 +321,12 @@ final class QuadrupedModel: ObservableObject {
     private(set) var spinMode = false
     private var lastPoseTime: TimeInterval?
     private var previewPhase = 0.0
+    // Test IK pad-mode preview only; the defaults leave every other view as it was.
+    private var previewPosture = (roll: 0.0, pitch: 0.0)       // rad, firmware convention
+    private var trotProfileOverride: AuraGaitProfile?
+    private var allowsSteppingInPlace = true
+    private var padModeTime: TimeInterval?
+    private var padModeCommand = (forward: 0.0, lateral: 0.0, turn: 0.0)
     private var filteredDrive = (forward: 0.0, lateral: 0.0, turn: 0.0, height: 0.0)
     private var lastAuraTick: UInt32?
     private var cachedAuraSnapshot: QuadrupedSnapshot?
@@ -398,7 +404,8 @@ final class QuadrupedModel: ObservableObject {
     }
 
     private func locomotionProfile(for gait: QuadGait) -> AuraGaitProfile {
-        locomotionProfiles.first(where: { $0.gait == gait.boardID }) ??
+        if gait == .trot, let trotProfileOverride { return trotProfileOverride }
+        return locomotionProfiles.first(where: { $0.gait == gait.boardID }) ??
             AuraGaitProfile.defaults.first(where: { $0.gait == gait.boardID }) ??
             AuraGaitProfile.defaults[0]
     }
@@ -413,6 +420,45 @@ final class QuadrupedModel: ObservableObject {
     func ikLabSnapshot(at time: TimeInterval, gait: QuadGait,
                        forward: Double, lateral: Double, turn: Double,
                        running: Bool) -> QuadrupedSnapshot {
+        previewPosture = (0, 0)
+        trotProfileOverride = nil
+        allowsSteppingInPlace = true
+        padModeTime = nil
+        return labPose(at: time, gait: gait, forward: forward, lateral: lateral, turn: turn, running: running)
+    }
+
+    // Test IK: Aura's pad modes 1–4 as robot_gait.c runs them.
+    // 1 stands (the IMU levelling has no equivalent here), 2 tilts the torso
+    // ±15° from the left stick at 40°/s, 3 walks the saved Run profile,
+    // 4 trots with the firmware's fixed profile and a 0.25 s stick filter.
+    func ikLabPadSnapshot(at time: TimeInterval, mode: Int,
+                          forward: Double, lateral: Double, turn: Double) -> QuadrupedSnapshot {
+        let dt = min(0.05, max(0, time - (padModeTime ?? time)))
+        padModeTime = time
+        let degree = Double.pi / 180
+        let target = mode == 2 ? (roll: -lateral * 15 * degree, pitch: -forward * 15 * degree) : (roll: 0.0, pitch: 0.0)
+        let slew = 40 * degree * dt
+        previewPosture.roll += max(-slew, min(slew, target.roll - previewPosture.roll))
+        previewPosture.pitch += max(-slew, min(slew, target.pitch - previewPosture.pitch))
+        let alpha = dt / (0.25 + dt)
+        if mode == 4 {
+            padModeCommand.forward += alpha * (forward - padModeCommand.forward)
+            padModeCommand.lateral += alpha * (lateral - padModeCommand.lateral)
+            padModeCommand.turn += alpha * (turn - padModeCommand.turn)
+        } else {
+            padModeCommand = (0, 0, 0)
+        }
+        trotProfileOverride = mode == 4 ? AuraGaitProfile.firmwareTrot : nil
+        allowsSteppingInPlace = false
+        let gait: QuadGait = mode == 3 ? .run : mode == 4 ? .trot : .stand
+        let drive = mode == 4 ? padModeCommand : (forward: forward, lateral: lateral, turn: turn)
+        return labPose(at: time, gait: gait, forward: drive.forward, lateral: drive.lateral,
+                       turn: drive.turn, running: mode >= 3)
+    }
+
+    private func labPose(at time: TimeInterval, gait: QuadGait,
+                         forward: Double, lateral: Double, turn: Double,
+                         running: Bool) -> QuadrupedSnapshot {
         selectedGait = gait
         spinMode = false
         jumpStartedAt = nil
@@ -582,6 +628,9 @@ final class QuadrupedModel: ObservableObject {
 
     // Test IK probe: Aura standing, one leg moved to the probe's joint angles.
     func ikLabProbeSnapshot(at time: TimeInterval, leg: QuadLeg, angles: [Double]?) -> QuadrupedSnapshot {
+        previewPosture = (0, 0)
+        trotProfileOverride = nil
+        padModeTime = nil
         selectedGait = .stand
         spinMode = false
         jumpStartedAt = nil
@@ -935,7 +984,7 @@ final class QuadrupedModel: ObservableObject {
         let rawMagnitude = min(1, sqrt(rawDrive.forward * rawDrive.forward + rawDrive.lateral * rawDrive.lateral + rawDrive.turn * rawDrive.turn))
         let currentJumpLift = jumpLift(at: time)
         let jumping = currentJumpLift > 0
-        let steppingInPlace = (selectedGait == .trot || selectedGait == .tripod) && rawMagnitude < 0.02
+        let steppingInPlace = allowsSteppingInPlace && (selectedGait == .trot || selectedGait == .tripod) && rawMagnitude < 0.02
         // The firmware applies the stick command directly; so does the preview.
         filteredDrive = rawDrive
         let drive = filteredDrive
@@ -986,7 +1035,7 @@ final class QuadrupedModel: ObservableObject {
                                    geometry: geometry, drive: drive, stride: stride,
                                    steppingInPlace: steppingInPlace, turnCentre: centre, spin: spinRequested)
                 : QuadVector(x: 0, y: 0, z: 0))
-        let plannedPosture = (roll: 0.0, pitch: 0.0)
+        let plannedPosture = previewPosture
         var guideRadii: [QuadLeg: Double] = [:]
         let poses: [LegPose] = QuadLeg.allCases.map { leg -> LegPose in
             let offset = gait.isSingleFoot ? leg.crawlPhase : leg.trotPhase
@@ -1944,6 +1993,7 @@ private struct IKLabScene: NSViewRepresentable {
     let lateral: Double
     let turn: Double
     let playing: Bool
+    let padMode: Int          // 1…4 previews Aura's pad mode; 0 uses `gait`
     // Probe tab: Aura standing with this leg at the probe's joint angles
     // (nil angles: the point is out of reach, the leg stays neutral).
     let probe: (leg: QuadLeg, angles: [Double]?)?
@@ -1977,6 +2027,11 @@ private struct IKLabScene: NSViewRepresentable {
             let snapshot = model.ikLabProbeSnapshot(at: time, leg: probe.leg, angles: probe.angles)
             context.coordinator.renderer.update(model, snapshot: snapshot, calibrationHighlight: probe.leg,
                                                 lockPresentationToOrigin: true)
+        } else if padMode != 0 {
+            let snapshot = model.ikLabPadSnapshot(at: time, mode: padMode, forward: playing ? forward : 0,
+                                                  lateral: playing ? lateral : 0, turn: playing ? turn : 0)
+            context.coordinator.renderer.update(model, snapshot: snapshot,
+                                                lockPresentationToOrigin: true, showFootTrails: true)
         } else {
             let snapshot = model.ikLabSnapshot(at: time, gait: gait, forward: forward,
                                                lateral: lateral, turn: turn, running: playing)
@@ -1991,6 +2046,7 @@ private struct IKLabScene: NSViewRepresentable {
 // separate QuadrupedModel and has no connection object, so it remains useful
 // with the board unplugged and makes hardware-safe trajectory experiments.
 private final class IKLabStore: ObservableObject {
+    @Published var padMode = 3        // Aura pad mode 1…4, or 0 for a planner gait
     @Published var gait: QuadGait = .crawl
     @Published var playing = true
     @Published var forward = 1.0
@@ -2022,11 +2078,13 @@ struct IKLabView: View {
             TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
                 IKLabScene(model: model, gait: store.gait, forward: store.forward,
                            lateral: store.lateral, turn: store.turn, playing: store.playing,
-                           probe: probe, time: timeline.date.timeIntervalSinceReferenceDate)
+                           padMode: store.padMode, probe: probe,
+                           time: timeline.date.timeIntervalSinceReferenceDate)
             }
             .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
-                IKLabOverlay(title: tab == .probe ? "IK PROBE · \(store.probeLeg.rawValue)" : store.gait.rawValue.uppercased(),
+                IKLabOverlay(title: tab == .probe ? "IK PROBE · \(store.probeLeg.rawValue)"
+                                    : store.padMode != 0 ? AuraPadMode.title(store.padMode) : store.gait.rawValue.uppercased(),
                              detail: tab == .probe ? (solution.reachable ? "reachable" : "out of reach")
                                                    : model.gravityStatusText,
                              warning: tab == .probe && !solution.reachable)
@@ -2049,7 +2107,7 @@ struct IKLabView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         switch tab {
                         case .pad: IKLabPadTab(model: model, store: store)
-                        case .step: IKLabStepTab(aura: aura, gait: store.gait)
+                        case .step: IKLabStepTab(aura: aura, gait: store.gait, padMode: store.padMode)
                         case .probe: IKLabProbeTab(store: store, target: target, solution: solution)
                         case .model: IKLabModelTab(model: model)
                         }
@@ -2088,31 +2146,60 @@ private struct IKLabPadTab: View {
     @ObservedObject var model: QuadrupedModel
     @ObservedObject var store: IKLabStore
 
+    private var modeNote: String {
+        switch store.padMode {
+        case 1: "Stands. On Aura the IMU keeps the torso level."
+        case 2: "Left stick tilts the torso, ±15° at 40°/s."
+        case 3: "Run profile as saved on Aura."
+        case 4: "Firmware trot · stick smoothed over 0.25 s."
+        default: ""
+        }
+    }
+
     var body: some View {
-        Panel("Gait") {
-            Picker("", selection: $store.gait) {
-                ForEach(QuadGait.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        Panel("Mode") {
+            Picker("", selection: $store.padMode) {
+                Text("1").tag(1); Text("2").tag(2); Text("3").tag(3); Text("4").tag(4)
+                Text("Gait").tag(0)
             }
             .labelsHidden()
-            .pickerStyle(.menu)
-            if store.gait == .tripod {
-                Picker("Lifted leg", selection: $model.tripodExcluded) {
-                    ForEach(QuadLeg.allCases) { Text($0.rawValue).tag($0.wireIndex) }
+            .pickerStyle(.segmented)
+            if store.padMode == 0 {
+                Picker("", selection: $store.gait) {
+                    ForEach(QuadGait.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                if store.gait == .tripod {
+                    Picker("Lifted leg", selection: $model.tripodExcluded) {
+                        ForEach(QuadLeg.allCases) { Text($0.rawValue).tag($0.wireIndex) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            } else {
+                Text(modeNote).font(Theme.label).foregroundStyle(Theme.muted)
             }
             Toggle("Animate", isOn: $store.playing)
         }
-        Panel("Sticks", trailing: {
-            Button("Zero") { store.forward = 0; store.lateral = 0; store.turn = 0 }
-                .buttonStyle(AuraButtonStyle(compact: true))
-        }) {
-            ProfileSlider(title: "Forward", value: $store.forward, range: -1...1, step: 0.01,
-                          text: String(format: "%+.2f", store.forward), editable: store.gait != .stand) {}
-            ProfileSlider(title: "Lateral", value: $store.lateral, range: -1...1, step: 0.01,
-                          text: String(format: "%+.2f", store.lateral), editable: store.gait != .stand) {}
-            ProfileSlider(title: "Turn", value: $store.turn, range: -1...1, step: 0.01,
-                          text: String(format: "%+.2f", store.turn), editable: store.gait != .stand) {}
+        if store.padMode != 1 && !(store.padMode == 0 && store.gait == .stand) {
+            Panel("Sticks", trailing: {
+                Button("Zero") { store.forward = 0; store.lateral = 0; store.turn = 0 }
+                    .buttonStyle(AuraButtonStyle(compact: true))
+            }) {
+                if store.padMode == 2 {
+                    ProfileSlider(title: "Pitch · left Y", value: $store.forward, range: -1...1, step: 0.01,
+                                  text: String(format: "%+.1f°", 0 - store.forward * 15 + 0), editable: true) {}
+                    ProfileSlider(title: "Roll · left X", value: $store.lateral, range: -1...1, step: 0.01,
+                                  text: String(format: "%+.1f°", 0 - store.lateral * 15 + 0), editable: true) {}
+                } else {
+                    ProfileSlider(title: "Forward", value: $store.forward, range: -1...1, step: 0.01,
+                                  text: String(format: "%+.2f", store.forward), editable: true) {}
+                    ProfileSlider(title: "Lateral", value: $store.lateral, range: -1...1, step: 0.01,
+                                  text: String(format: "%+.2f", store.lateral), editable: true) {}
+                    ProfileSlider(title: "Turn", value: $store.turn, range: -1...1, step: 0.01,
+                                  text: String(format: "%+.2f", store.turn), editable: true) {}
+                }
+            }
         }
     }
 }
@@ -2120,32 +2207,54 @@ private struct IKLabPadTab: View {
 private struct IKLabStepTab: View {
     @ObservedObject var aura: AuraConnection
     let gait: QuadGait
+    let padMode: Int
 
     var body: some View {
-        if gait == .stand {
+        if padMode == 1 || padMode == 2 {
+            Panel(AuraPadMode.title(padMode)) {
+                Text("No step in this mode.").font(Theme.label).foregroundStyle(Theme.muted)
+            }
+        } else if padMode == 4 {
+            let profile = AuraGaitProfile.firmwareTrot
+            Panel("Mode 4 trot", trailing: {
+                Text("fixed in firmware").font(Theme.label).foregroundStyle(Theme.faint)
+            }) {
+                ValueRow(label: "Stride", value: "\(profile.strideMm) mm")
+                ValueRow(label: "Step height", value: "\(profile.stepHeightMm) mm")
+                ValueRow(label: "Frequency", value: String(format: "%.2f Hz", profile.frequencyHz))
+                ValueRow(label: "Duty", value: "\(profile.dutyPercent)%")
+            }
+        } else if padMode == 3 {
+            editor(.run)
+        } else if gait == .stand {
             Panel("Step") {
                 Text("No step in Stand.").font(Theme.label).foregroundStyle(Theme.muted)
             }
         } else {
-            let id = gait.boardID
-            let profile = aura.gaitProfile(id)
-            let editable = !aura.robotState.armed
-            let singleFoot = gait.isSingleFoot || gait == .tripod
-            Panel(gait.rawValue, trailing: {
-                Text(aura.robotState.armed ? "armed · locked" : "shared with Aura")
-                    .font(Theme.label).foregroundStyle(aura.robotState.armed ? Theme.yellow : Theme.faint)
-            }) {
-                ProfileSlider(title: "Stride", value: binding(id, \.strideMm), range: 15...300, step: 1,
-                              text: "\(profile.strideMm) mm", editable: editable) { save(id) }
-                ProfileSlider(title: "Step height", value: binding(id, \.stepHeightMm), range: 5...100, step: 1,
-                              text: "\(profile.stepHeightMm) mm", editable: editable) { save(id) }
-                ProfileSlider(title: "Frequency", value: Binding(
-                    get: { aura.gaitProfile(id).frequencyHz },
-                    set: { value in var changed = aura.gaitProfile(id)
-                        changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
-                              range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
-                              text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save(id) }
-            }
+            editor(gait)
+        }
+    }
+
+    @ViewBuilder
+    private func editor(_ gait: QuadGait) -> some View {
+        let id = gait.boardID
+        let profile = aura.gaitProfile(id)
+        let editable = !aura.robotState.armed
+        let singleFoot = gait.isSingleFoot || gait == .tripod
+        Panel(gait.rawValue, trailing: {
+            Text(aura.robotState.armed ? "armed · locked" : "shared with Aura")
+                .font(Theme.label).foregroundStyle(aura.robotState.armed ? Theme.yellow : Theme.faint)
+        }) {
+            ProfileSlider(title: "Stride", value: binding(id, \.strideMm), range: 15...300, step: 1,
+                          text: "\(profile.strideMm) mm", editable: editable) { save(id) }
+            ProfileSlider(title: "Step height", value: binding(id, \.stepHeightMm), range: 5...100, step: 1,
+                          text: "\(profile.stepHeightMm) mm", editable: editable) { save(id) }
+            ProfileSlider(title: "Frequency", value: Binding(
+                get: { aura.gaitProfile(id).frequencyHz },
+                set: { value in var changed = aura.gaitProfile(id)
+                    changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
+                          range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
+                          text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save(id) }
         }
     }
 

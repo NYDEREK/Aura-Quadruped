@@ -238,6 +238,11 @@ struct AuraGaitProfile: Equatable, Identifiable {
         }
     }
 
+    // Pad mode 4's fixed trot profile (ROBOT_TROT_* in main/robot_gait.c);
+    // the Test IK preview uses it. Keep the two in step.
+    static let firmwareTrot = AuraGaitProfile(gait: 1, strideMm: 40, stepHeightMm: 30,
+                                              frequencyCentiHz: 150, dutyPercent: 70)
+
     static let defaults: [AuraGaitProfile] = [
         .init(gait: 1, strideMm: 80, stepHeightMm: 58, frequencyCentiHz: 140, dutyPercent: 58),
         .init(gait: 2, strideMm: 50, stepHeightMm: 30, frequencyCentiHz: 65, dutyPercent: 82),
@@ -1329,6 +1334,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 recordHistorySample()
                 route.ingest(state: pendingRobotState, imu: pendingIMU, attitude: pendingAttitude)
                 sessions.ingest(power: pendingPower, state: pendingRobotState, attitude: pendingAttitude,
+                                imu: pendingIMU, contacts: pendingFootContacts,
                                 legs: pendingRobotLegTelemetry, route: route)
 
                 let now = ProcessInfo.processInfo.systemUptime

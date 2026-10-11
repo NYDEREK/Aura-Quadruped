@@ -123,6 +123,235 @@ private struct SessionDetail: View {
                     RouteMap(x: series.x, z: series.z).frame(height: 140)
                 }
             }
+            if !session.modes.isEmpty {
+                ModeTable(modes: session.modes)
+            }
+            if let plot = TracePlot(logger.trace(for: session)) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
+                    TraceChart(title: "Torso", unit: "°", plot: plot, lines: [
+                        .init(id: "roll", color: Theme.accent, values: plot.roll),
+                        .init(id: "pitch", color: Theme.accent2Line, values: plot.pitch)])
+                    TraceChart(title: "IMU correction", unit: "°", plot: plot, lines: [
+                        .init(id: "roll", color: Theme.accent, values: plot.correctionRoll),
+                        .init(id: "pitch", color: Theme.accent2Line, values: plot.correctionPitch)])
+                    TraceChart(title: "Joint error, worst joint", unit: "°", plot: plot, lines: [
+                        .init(id: "error", color: Theme.orange, values: plot.jointError)])
+                    TraceChart(title: "Sticks", unit: "", plot: plot, lines: [
+                        .init(id: "forward", color: Theme.accent, values: plot.forward),
+                        .init(id: "lateral", color: Theme.teal, values: plot.lateral),
+                        .init(id: "turn", color: Theme.accent2Line, values: plot.turn)])
+                }
+            }
+            if !session.events.isEmpty {
+                EventList(events: session.events)
+            }
+        }
+    }
+}
+
+func modeColor(_ mode: Int) -> Color {
+    switch mode {
+    case 1: Theme.blue
+    case 2: Theme.teal
+    case 3: Theme.purple
+    case 4: Theme.yellow
+    case 5: Theme.red
+    default: Theme.muted
+    }
+}
+
+private func clock(_ seconds: Double) -> String {
+    let s = Int(max(0, seconds).rounded(.down))
+    return String(format: "%d:%02d", s / 60, s % 60)
+}
+
+// Per-mode behaviour: one column per pad mode that was armed.
+private struct ModeTable: View {
+    let modes: [AuraModeStats]
+
+    var body: some View {
+        Panel("Modes") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .trailing, horizontalSpacing: 22, verticalSpacing: 5) {
+                    GridRow {
+                        Text("").gridColumnAlignment(.leading)
+                        ForEach(modes) { mode in
+                            HStack(spacing: 5) {
+                                Circle().fill(modeColor(mode.mode)).frame(width: 7, height: 7)
+                                Text(AuraPadMode.title(mode.mode)).font(Theme.label).foregroundStyle(Theme.text)
+                            }
+                        }
+                    }
+                    row("Armed", modes.map { durationText($0.armedTime) })
+                    row("Moving", modes.map { durationText($0.movingTime) })
+                    row("Distance", modes.map { metres($0.distance) })
+                    row("Max speed", modes.map { String(format: "%.0f mm/s", $0.maxSpeed) })
+                    row("Tilt RMS roll / pitch", modes.map { String(format: "%.1f / %.1f°", $0.rollRMS, $0.pitchRMS) })
+                    row("Tilt max roll / pitch", modes.map { String(format: "%.1f / %.1f°", $0.maxRoll, $0.maxPitch) })
+                    row("Wobble RMS", modes.map { String(format: "%.1f °/s", $0.wobbleRMS) })
+                    row("IMU correction RMS", modes.map { String(format: "%.2f°", $0.correctionRMS) })
+                    row("Joint error RMS", modes.map { String(format: "%.1f°", $0.trackingRMS) })
+                    row("Joint error max", modes.map { String(format: "%.1f° ", $0.maxTracking) + $0.maxTrackingJoint })
+                    row("Current avg / max", modes.map { String(format: "%.2f / %.2f A", $0.currentAverage, $0.maxCurrent) })
+                    row("Gait frequency", modes.map { $0.frequencySamples > 0 ? String(format: "%.2f Hz", $0.frequencyAverage) : "—" })
+                    row("Gait slowed", modes.map { percent($0.slowedRate) })
+                    row("At range limit", modes.map { percent($0.limitedRate) })
+                    row("Contact mismatch", modes.map { $0.contactSamples > 0 ? percent($0.contactMismatchRate) : "—" })
+                    row("Early touchdowns", modes.map { "\($0.earlyTouchdowns)" })
+                    row("Faults", modes.map { "\($0.faults)" }, tints: modes.map { $0.faults > 0 ? Theme.red : Theme.text })
+                }
+            }
+        }
+    }
+
+    private func percent(_ value: Double) -> String { String(format: "%.0f %%", value * 100) }
+
+    private func row(_ label: String, _ values: [String], tints: [Color]? = nil) -> some View {
+        GridRow {
+            Text(label).font(Theme.label).foregroundStyle(Theme.muted).gridColumnAlignment(.leading)
+            ForEach(values.indices, id: \.self) { index in
+                Text(values[index]).font(Theme.monoSmall).foregroundStyle(tints?[index] ?? Theme.text)
+            }
+        }
+    }
+}
+
+// The armed 25 Hz trace thinned to about 800 points for drawing. The joint
+// error keeps the worst value of each thinned window so short spikes stay.
+struct TracePlot {
+    struct Band: Identifiable { let id: Int; let mode: Int; let start: Double; let end: Double }
+    struct Line: Identifiable { let id: String; let color: Color; let values: [Double] }
+
+    var t: [Double] = []
+    var segment: [Int] = []       // breaks lines across disarmed gaps
+    var bands: [Band] = []
+    var roll: [Double] = [], pitch: [Double] = []
+    var correctionRoll: [Double] = [], correctionPitch: [Double] = []
+    var jointError: [Double] = []
+    var forward: [Double] = [], lateral: [Double] = [], turn: [Double] = []
+
+    init?(_ trace: AuraSessionTrace?) {
+        guard let trace, trace.t.count > 1 else { return nil }
+        let count = trace.t.count
+        var start = 0
+        for i in 1...count {
+            if i == count || trace.mode[i] != trace.mode[start] || trace.t[i] - trace.t[i - 1] > 0.3 {
+                bands.append(Band(id: bands.count, mode: trace.mode[start], start: trace.t[start], end: trace.t[i - 1]))
+                start = i
+            }
+        }
+        let step = max(1, count / 800)
+        var currentSegment = 0
+        for i in stride(from: 0, to: count, by: step) {
+            if let last = t.last, trace.t[i] - last > 0.3 + Double(step) * 0.06 { currentSegment += 1 }
+            t.append(trace.t[i])
+            segment.append(currentSegment)
+            roll.append(Double(trace.roll[i]) / 100)
+            pitch.append(Double(trace.pitch[i]) / 100)
+            correctionRoll.append(Double(trace.correctionRoll[i]) / 100)
+            correctionPitch.append(Double(trace.correctionPitch[i]) / 100)
+            forward.append(Double(trace.stick[0][i]) / 100)
+            lateral.append(Double(trace.stick[1][i]) / 100)
+            turn.append(Double(trace.stick[2][i]) / 100)
+            var worst = 0.0
+            for j in i..<min(count, i + step) {
+                for joint in 0..<12 where trace.jointMeasured[joint][j] != AuraSessionTrace.noReply {
+                    worst = max(worst, Double(abs(trace.jointTarget[joint][j] - trace.jointMeasured[joint][j])) / 10)
+                }
+            }
+            jointError.append(worst)
+        }
+    }
+}
+
+private struct TraceChart: View {
+    let title: String
+    let unit: String
+    let plot: TracePlot
+    let lines: [TracePlot.Line]
+
+    var body: some View {
+        Panel(title, trailing: {
+            HStack(spacing: 8) {
+                if lines.count > 1 {
+                    ForEach(lines) { line in
+                        HStack(spacing: 4) {
+                            Rectangle().fill(line.color).frame(width: 10, height: 2)
+                            Text(line.id).font(Theme.label).foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
+                Text(unit).font(Theme.label).foregroundStyle(Theme.faint)
+            }
+        }) {
+            Chart {
+                ForEach(plot.bands) { band in
+                    RectangleMark(xStart: .value("t", band.start), xEnd: .value("t", band.end))
+                        .foregroundStyle(modeColor(band.mode).opacity(0.13))
+                }
+                ForEach(lines) { line in
+                    ForEach(plot.t.indices, id: \.self) { i in
+                        LineMark(x: .value("t", plot.t[i]), y: .value(title, line.values[i]),
+                                 series: .value("line", "\(line.id)-\(plot.segment[i])"))
+                            .foregroundStyle(line.color)
+                            .lineStyle(StrokeStyle(lineWidth: 1.2))
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 6)) { value in
+                    AxisGridLine().foregroundStyle(Theme.line)
+                    AxisValueLabel {
+                        if let seconds = value.as(Double.self) { Text(clock(seconds)) }
+                    }
+                    .font(Theme.label).foregroundStyle(Theme.muted)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine().foregroundStyle(Theme.line)
+                    AxisValueLabel().font(Theme.label).foregroundStyle(Theme.muted)
+                }
+            }
+            .frame(height: 150)
+        }
+    }
+}
+
+private struct EventList: View {
+    let events: [AuraSessionEvent]
+
+    private func tint(_ kind: String) -> Color {
+        switch kind {
+        case "fault", "pad lost": Theme.red
+        case "armed": Theme.green
+        case "disarmed", "fault cleared": Theme.orange
+        case "mode": Theme.accent
+        default: Theme.muted
+        }
+    }
+
+    var body: some View {
+        Panel("Events", trailing: {
+            Text("\(events.count)").font(Theme.monoSmall).foregroundStyle(Theme.muted)
+        }) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 3) {
+                    ForEach(events.indices, id: \.self) { index in
+                        let event = events[index]
+                        HStack(spacing: 10) {
+                            Text(clock(event.t)).font(Theme.monoSmall).foregroundStyle(Theme.faint)
+                                .frame(width: 44, alignment: .leading)
+                            Text(event.kind).font(Theme.monoSmall).foregroundStyle(tint(event.kind))
+                                .frame(width: 96, alignment: .leading)
+                            Text(event.detail).font(Theme.monoSmall).foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
         }
     }
 }
@@ -149,7 +378,7 @@ struct SeriesChart: View {
             }
         }) {
             Chart(indices, id: \.self) { i in
-                LineMark(x: .value("t", t[i] / 60), y: .value(title, values[i]))
+                LineMark(x: .value("t", t[i]), y: .value(title, values[i]))
                     .foregroundStyle(color)
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
             }
@@ -157,7 +386,7 @@ struct SeriesChart: View {
                 AxisMarks(values: .automatic(desiredCount: 6)) { value in
                     AxisGridLine().foregroundStyle(Theme.line)
                     AxisValueLabel {
-                        if let m = value.as(Double.self) { Text(String(format: "%.0f min", m)) }
+                        if let seconds = value.as(Double.self) { Text(clock(seconds)) }
                     }
                     .font(Theme.label).foregroundStyle(Theme.muted)
                 }
