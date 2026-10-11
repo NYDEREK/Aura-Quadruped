@@ -1,4 +1,5 @@
 #include "aura_network.h"
+#include "aura_health.h"
 #include "robot_control.h"
 #include "wifi_credentials.h"
 #include <errno.h>
@@ -6,6 +7,7 @@
 #include <unistd.h>
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -40,11 +42,25 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 // Wi-Fi stall delays the stream instead of breaking its framing.
 static uint8_t backlog[2048];
 static size_t backlog_used;
+static int64_t last_progress_us;   // last time the socket took any bytes
+
+// A reader that has taken nothing for this long while there was data for it
+// is gone: drop it so the app reconnects instead of the link going silent.
+#define AURA_STALLED_READER_US (2 * 1000 * 1000)
+
 
 static void close_client(void)
 {
     if (client >= 0) { shutdown(client, SHUT_RDWR); close(client); client = -1; }
     backlog_used = 0;
+}
+// Socket lock held. Called when a write could not go out.
+static bool reader_stalled(void)
+{
+    if (esp_timer_get_time() - last_progress_us <= AURA_STALLED_READER_US) return false;
+    ESP_LOGW(TAG, "App took no data for 2 s; dropping the connection");
+    close_client();
+    return true;
 }
 bool aura_network_connected(void)
 {
@@ -63,8 +79,9 @@ static bool flush_backlog(void)
         if (sent > 0) {
             backlog_used -= (size_t)sent;
             memmove(backlog, backlog + sent, backlog_used);
+            last_progress_us = esp_timer_get_time();
         } else if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return true;
+            return !reader_stalled();
         } else {
             close_client();
             return false;
@@ -75,7 +92,7 @@ static bool flush_backlog(void)
 
 // Socket lock held. A droppable write (a telemetry cycle) is skipped whole
 // while the link is still catching up; replies and events are always kept.
-// Only a reader that stays stalled until the backlog is full is dropped.
+// A reader that takes nothing for 2 s, or lets the backlog fill, is dropped.
 static void write_frames(const uint8_t *data, size_t size, bool droppable)
 {
     if (!running || !has_ip || client < 0) return;
@@ -85,6 +102,8 @@ static void write_frames(const uint8_t *data, size_t size, bool droppable)
         int sent = send(client, data, size, MSG_DONTWAIT);
         if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { close_client(); return; }
         done = sent > 0 ? (size_t)sent : 0;
+        if (done) last_progress_us = esp_timer_get_time();
+        else if (reader_stalled()) return;
         if (done == size || (droppable && done == 0)) return;
     } else if (droppable) {
         return;
@@ -144,6 +163,7 @@ static void network_task(void *arg)
     TickType_t next_retry = 0;
     uint32_t retry_interval_ms = 10000u;
     while (running) {
+        aura_health_beat(AURA_TASK_NETWORK);
         if (!has_ip) {
             xSemaphoreTake(socket_lock, portMAX_DELAY); close_client(); xSemaphoreGive(socket_lock);
             used = 0;
@@ -167,11 +187,15 @@ static void network_task(void *arg)
         xSemaphoreTake(socket_lock, portMAX_DELAY);
         int fd = client;
         xSemaphoreGive(socket_lock);
-        fd_set reads; FD_ZERO(&reads); FD_SET(fd >= 0 ? fd : listener, &reads);
+        // The listener is watched even while a client is connected: a new
+        // connection replaces the old one. After a dropped Wi-Fi link the old
+        // socket can look alive for minutes, and the app could not get back in.
+        fd_set reads; FD_ZERO(&reads); FD_SET(listener, &reads);
+        if (fd >= 0) FD_SET(fd, &reads);
         struct timeval timeout = {.tv_usec = 100000};
-        int selected = select((fd >= 0 ? fd : listener) + 1, &reads, NULL, NULL, &timeout);
+        int selected = select((fd > listener ? fd : listener) + 1, &reads, NULL, NULL, &timeout);
         if (selected <= 0) continue;
-        if (fd < 0) {
+        if (FD_ISSET(listener, &reads)) {
             int accepted = accept(listener, NULL, NULL);
             if (accepted >= 0) {
                 // Each telemetry cycle is one write; send it at once instead
@@ -180,12 +204,20 @@ static void network_task(void *arg)
                 setsockopt(accepted, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
             }
             xSemaphoreTake(socket_lock, portMAX_DELAY);
-            if (running) client = accepted; else if (accepted >= 0) close(accepted);
+            if (running && accepted >= 0) {
+                if (client >= 0) ESP_LOGW(TAG, "New app connection replaces the previous one");
+                close_client();
+                client = accepted;
+                last_progress_us = esp_timer_get_time();
+            } else if (accepted >= 0) {
+                close(accepted);
+            }
             xSemaphoreGive(socket_lock);
             used = 0;
             if (accepted >= 0) ESP_LOGW(TAG, "Aura app connected over Wi-Fi");
             continue;
         }
+        if (fd < 0) continue;
         xSemaphoreTake(socket_lock, portMAX_DELAY);
         int count = client == fd ? recv(fd, input + used, sizeof(input) - used, MSG_DONTWAIT) : -1;
         if (count <= 0 && client == fd) close_client();

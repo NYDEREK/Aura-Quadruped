@@ -24,6 +24,7 @@
 #include "robot_gait.h"
 #include "servo_bus.h"
 #include "state_estimator_service.h"
+#include "aura_health.h"
 #include "status_led.h"
 #include "tof.h"
 #include "ws2812.h"
@@ -86,9 +87,11 @@ static void state_indicator_task(void *argument)
 {
     (void)argument;
     uint8_t strip[STATE_INDICATOR_PIXEL_COUNT * 3] = {0};
+    robot_gait_snapshot_t gait = {0};
     for (;;) {
-        robot_gait_snapshot_t gait = {0};
-        robot_gait_snapshot(&gait);
+        // On a busy lock keep the previous state rather than flash "mode 0".
+        robot_gait_snapshot_t now;
+        if (robot_gait_snapshot(&now)) gait = now;
         const bool armed = robot_control_is_armed();
         const bool safety_fault = robot_control_has_safety_fault();
         const bool red_phase = ((unsigned)(xTaskGetTickCount() / pdMS_TO_TICKS(250)) & 1U) == 0;
@@ -421,6 +424,7 @@ static void telemetry_task(void *argument)
     TickType_t wake = xTaskGetTickCount();
     unsigned report_divider = 0;
     while (true) {
+        aura_health_beat(AURA_TASK_SENSORS);
         // Keep polling after a transient I2C error. The next coherent sample
         // restores the public IMU status instead of permanently stopping
         // the owner task after one arbitration timeout.

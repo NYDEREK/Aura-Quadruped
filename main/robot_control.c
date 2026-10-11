@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "robot_control.h"
+#include "aura_health.h"
 #include "esp_timer.h"
 #include "servo_bus.h"
 
@@ -47,6 +48,8 @@ static robot_model_t robot;
 static SemaphoreHandle_t robot_mutex;
 static TaskHandle_t control_task;
 static TaskHandle_t feedback_task;
+// Written only under robot_mutex (atomic stores); read lock-free by
+// robot_control_is_armed() so a busy mutex can never read as "disarmed".
 static bool armed;
 static bool calibration_torque_enabled[ROBOT_LEG_COUNT][ROBOT_AXIS_COUNT];
 // Unlike calibration_torque_enabled, this flag only permits periodic reads
@@ -143,7 +146,7 @@ static bool update_safety_monitor_locked(robot_leg_t leg, robot_axis_type_t axis
     const uint8_t confirmations = monitor->consecutive_stall_samples;
     // Kill output scheduling before the broadcast torque-off reaches the bus.
     // This also means a pending 50 Hz planner tick cannot emit another target.
-    armed = false;
+    __atomic_store_n(&armed, false, __ATOMIC_RELEASE);
     reset_safety_monitor_locked();
     memset(calibration_torque_enabled, 0, sizeof(calibration_torque_enabled));
     calibration_preview_enabled = false;
@@ -304,6 +307,7 @@ static void robot_control_task(void *unused)
     (void)unused;
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
+        aura_health_beat(AURA_TASK_CONTROL);
         control_tick();
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_CONTROL_PERIOD_MS));
     }
@@ -334,6 +338,7 @@ static void robot_feedback_task(void *unused)
     TickType_t wake = xTaskGetTickCount();
     unsigned cursor = 0;
     for (;;) {
+        aura_health_beat(AURA_TASK_FEEDBACK);
         // One short addressed read every 5 ms refreshes all twelve axes at
         // about 16 Hz when the complete robot is armed. During commissioning
         // it skips released axes unless the read-only live preview is enabled;
@@ -534,7 +539,7 @@ esp_err_t robot_control_arm(void)
             for (int axis = 0; axis < ROBOT_AXIS_COUNT; ++axis)
                 (void)servo_set_torque(robot.axis[leg][axis].config.servo_id, false);
     }
-    armed = result == ESP_OK;
+    __atomic_store_n(&armed, result == ESP_OK, __ATOMIC_RELEASE);
     xSemaphoreGive(robot_mutex);
     return result;
 }
@@ -545,7 +550,7 @@ esp_err_t robot_control_disarm(void)
     if (xSemaphoreTake(robot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
     // Clear the state before I/O so a failed transmission cannot leave the
     // 50 Hz task producing another motion packet.
-    armed = false;
+    __atomic_store_n(&armed, false, __ATOMIC_RELEASE);
     reset_safety_monitor_locked();
     memset(calibration_torque_enabled, 0, sizeof(calibration_torque_enabled));
     calibration_preview_enabled = false;
@@ -564,10 +569,11 @@ esp_err_t robot_control_disarm(void)
 
 bool robot_control_is_armed(void)
 {
-    if (!robot_mutex || xSemaphoreTake(robot_mutex, 0) != pdTRUE) return false;
-    const bool result = armed;
-    xSemaphoreGive(robot_mutex);
-    return result;
+    // Lock-free on purpose. It used to take the mutex with a zero timeout and
+    // report "disarmed" whenever the control or feedback task held it, which
+    // happens often while armed: the gait then reset its joint trajectories
+    // for a tick and telemetry showed false disarm/arm blips.
+    return robot_mutex && __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
 }
 
 bool robot_control_has_safety_fault(void)
@@ -1177,9 +1183,10 @@ esp_err_t robot_control_calibration_release_leg(robot_leg_t leg)
     return result;
 }
 
-void robot_control_snapshot(robot_model_t *model)
+bool robot_control_snapshot(robot_model_t *model)
 {
-    if (!model || !robot_mutex || xSemaphoreTake(robot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    if (!model || !robot_mutex || xSemaphoreTake(robot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return false;
     memcpy(model, &robot, sizeof(*model));
     xSemaphoreGive(robot_mutex);
+    return true;
 }

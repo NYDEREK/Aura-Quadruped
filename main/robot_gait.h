@@ -123,7 +123,9 @@ typedef struct {
 
 esp_err_t robot_gait_init(void);
 esp_err_t robot_gait_start(void);
-void robot_gait_snapshot(robot_gait_snapshot_t *snapshot);
+// False when the gait lock was busy past its short timeout; *snapshot is
+// then left untouched.
+bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot);
 // Sets the neutral standing height used for inverse kinematics and arm
 // preflight. It is persisted in NVS and is intentionally available only
 // while torque is off: changing it never writes a servo target.

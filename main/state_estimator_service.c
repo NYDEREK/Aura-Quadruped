@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "mpu6050.h"
 #include "state_estimator_service.h"
+#include "aura_health.h"
 
 #define ESTIMATOR_PERIOD_MS 20
 #define DEG_TO_RAD 0.01745329252f
@@ -65,6 +66,7 @@ static void estimator_task(void *argument)
     (void)argument;
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
+        aura_health_beat(AURA_TASK_ESTIMATOR);
         float accel[3] = {0}, gyro[3] = {0};
         unsigned count;
         estimator_legs_t snapshot;

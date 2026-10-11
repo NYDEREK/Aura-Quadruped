@@ -13,6 +13,7 @@
 #include "joint_trajectory.h"
 #include "robot_control.h"
 #include "robot_gait.h"
+#include "aura_health.h"
 #include "robot_gait_profile.h"
 #include "robot_locomotion.h"
 #include "robot_predictive_support.h"
@@ -312,9 +313,10 @@ static float clampf(float value, float low, float high)
 
 static float wrap_radians(float value)
 {
-    while (value > ROBOT_PI) value -= 2.0f * ROBOT_PI;
-    while (value < -ROBOT_PI) value += 2.0f * ROBOT_PI;
-    return value;
+    // remainderf instead of subtract loops: an infinite or huge angle would
+    // never leave the loop and the 50 Hz gait task would hang.
+    if (!isfinite(value)) return 0.0f;
+    return remainderf(value, 2.0f * ROBOT_PI);
 }
 
 static int16_t radians_to_cdeg_signed(float value)
@@ -1958,6 +1960,7 @@ static void gait_task_fn(void *unused)
         if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
             gait_tick();
             xSemaphoreGive(gait_mutex);
+            aura_health_beat(AURA_TASK_GAIT);
         }
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS));
     }
@@ -2470,13 +2473,14 @@ esp_err_t robot_gait_start(void)
     return xTaskCreate(gait_task_fn, "robot_gait", 4096, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-void robot_gait_snapshot(robot_gait_snapshot_t *snapshot)
+bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot)
 {
-    if (!snapshot || !gait_mutex || xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
+    if (!snapshot || !gait_mutex || xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(5)) != pdTRUE) return false;
     *snapshot = state;
     snapshot->calibration_test = calibration_test.enabled;
     snapshot->calibration_leg = calibration_test.leg;
     xSemaphoreGive(gait_mutex);
+    return true;
 }
 
 esp_err_t robot_gait_set_virtual_input(const robot_gait_virtual_input_t *input)

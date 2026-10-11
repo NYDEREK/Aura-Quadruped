@@ -88,4 +88,6 @@ esp_err_t robot_control_calibration_set_leg_torque(robot_leg_t leg, bool enabled
 // target position to a servo.
 esp_err_t robot_control_calibration_set_leg_preview(robot_leg_t leg, bool enabled);
 esp_err_t robot_control_calibration_release_leg(robot_leg_t leg);
-void robot_control_snapshot(robot_model_t *model);
+// False when the robot lock was busy past its timeout; *model is then left
+// untouched.
+bool robot_control_snapshot(robot_model_t *model);

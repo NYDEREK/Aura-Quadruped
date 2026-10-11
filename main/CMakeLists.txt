@@ -1,4 +1,4 @@
-idf_component_register(SRCS "ps5_transport.c" "main.c" "app_state.c" "aura_radio.c" "aura_network.c"
+idf_component_register(SRCS "ps5_transport.c" "main.c" "app_state.c" "aura_radio.c" "aura_network.c" "aura_health.c"
                             "board_i2c.c" "icm42688.c" "mpu6050.c" "attitude_filter.c" "power.c" "battery_gauge.c" "status_led.c" "servo_bus.c" "robot_model.c" "robot_control.c" "joint_trajectory.c" "robot_gait_profile.c" "robot_locomotion.c" "robot_predictive_support.c" "robot_body_trajectory.c" "robot_balance.c" "robot_walk_balance.c" "robot_state_estimator.c" "state_estimator_service.c" "robot_static_gait_profile.c" "robot_static_balance.c" "robot_gait_sync.c" "robot_contact.c" "robot_kinematics.c" "robot_odometry.c" "robot_gait.c"
                             "servo_protocol.c" "dualsense.c" "tof.c" "vl53l4cd_platform.c"
                             "vl53l4cd_uld/vl53l4cd_api.c" "ws2812.c"

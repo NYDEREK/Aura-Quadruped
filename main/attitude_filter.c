@@ -14,9 +14,9 @@ static float clampf(float value, float low, float high)
 
 static float wrap_pi(float angle)
 {
-    while (angle > ATTITUDE_PI) angle -= 2.0f * ATTITUDE_PI;
-    while (angle < -ATTITUDE_PI) angle += 2.0f * ATTITUDE_PI;
-    return angle;
+    // remainderf: a non-finite or huge angle cannot hang a subtract loop.
+    if (!isfinite(angle)) return 0.0f;
+    return remainderf(angle, 2.0f * ATTITUDE_PI);
 }
 
 static float blend_angle(float current, float measurement, float weight)

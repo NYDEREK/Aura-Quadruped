@@ -20,6 +20,8 @@
 #include "aura_radio.h"
 #include "aura_features.h"
 #include "aura_network.h"
+#include "aura_health.h"
+#include "esp_system.h"
 #include "dualsense.h"
 #include "mpu6050.h"
 #include "servo_bus.h"
@@ -133,6 +135,7 @@ enum {
     // Kalman estimate: position 0.1 mm (x, z), height mm, heading cdeg,
     // velocity forward/left mm/s, gyro bias in 0.001 deg/s.
     AURA_EVT_ROBOT_ESTIMATE = 0x32,
+    AURA_EVT_HEALTH = 0x33,
 };
 
 typedef struct {
@@ -180,8 +183,12 @@ static void process_create_arm_switch(void)
 
     if (create_pressed && !create_was_pressed) {
         robot_gait_snapshot_t gait = {0};
-        robot_gait_snapshot(&gait);
-        if (gait.calibration_test || robot_control_calibration_is_active()) {
+        bool have_gait = false;
+        for (int attempt = 0; attempt < 4 && !have_gait; ++attempt) have_gait = robot_gait_snapshot(&gait);
+        if (!have_gait) {
+            ESP_LOGW(TAG, "Create ignored: gait state busy, press again");
+            send_result(AURA_CMD_ROBOT_ARM, ESP_ERR_TIMEOUT, 0xff);
+        } else if (gait.calibration_test || robot_control_calibration_is_active()) {
             ESP_LOGW(TAG, "Create ignored while calibration owns an axis or TTL preview is active");
             // The physical Create button has no desktop request to wait on, so
             // explicitly publish the refusal.  This keeps the operator from
@@ -286,11 +293,30 @@ static void make_imu_frame(uint8_t frame[AURA_FRAME_SIZE])
     put_u16(frame + 18, (uint16_t)scaled_i16(state.imu.temperature_c, 100));
 }
 
+// Telemetry task only. A snapshot that misses its lock timeout repeats the
+// last good one: sending the zeroed struct instead showed the app mode 0, a
+// lost pad, tick 0 and empty joints for one frame.
+static void telemetry_gait_snapshot(robot_gait_snapshot_t *out)
+{
+    static robot_gait_snapshot_t last;
+    robot_gait_snapshot_t now = {0};
+    if (robot_gait_snapshot(&now)) last = now;
+    *out = last;
+}
+
+static void telemetry_robot_snapshot(robot_model_t *out)
+{
+    static robot_model_t last;
+    static bool have_last;
+    if (robot_control_snapshot(out)) { last = *out; have_last = true; }
+    else if (have_last) *out = last;
+}
+
 static void make_robot_attitude_frame(uint8_t frame[AURA_FRAME_SIZE])
 {
     robot_gait_snapshot_t gait = {0};
     app_state_snapshot_t app = {0};
-    robot_gait_snapshot(&gait);
+    telemetry_gait_snapshot(&gait);
     app_state_get(&app);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_ATTITUDE;
@@ -342,7 +368,7 @@ static void make_robot_motion_tuning_frame(uint8_t frame[AURA_FRAME_SIZE])
 static void make_robot_contact_frame(uint8_t frame[AURA_FRAME_SIZE])
 {
     robot_gait_snapshot_t gait = {0};
-    robot_gait_snapshot(&gait);
+    telemetry_gait_snapshot(&gait);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_CONTACT;
     // schema 2: the observer is available; Aura can gate touchdown itself.
@@ -429,9 +455,9 @@ static void make_dualsense_frame(uint8_t frame[AURA_FRAME_SIZE])
 static void make_robot_status_frame(uint8_t frame[AURA_FRAME_SIZE])
 {
     robot_gait_snapshot_t gait = {0};
-    robot_gait_snapshot(&gait);
+    telemetry_gait_snapshot(&gait);
     robot_model_t model = {0};
-    robot_control_snapshot(&model);
+    telemetry_robot_snapshot(&model);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_STATUS;
     // 0 = regular 12-axis mode; 1...4 = a calibration test is driving
@@ -476,7 +502,7 @@ static void make_robot_safety_fault_frame(uint8_t frame[AURA_FRAME_SIZE])
 static void make_robot_pose_frame(uint8_t frame[AURA_FRAME_SIZE])
 {
     robot_gait_snapshot_t gait = {0};
-    robot_gait_snapshot(&gait);
+    telemetry_gait_snapshot(&gait);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_POSE;
     frame[1] = gait.odometry_valid ? 1 : 0;
@@ -504,10 +530,23 @@ static void make_robot_estimate_frame(uint8_t frame[AURA_FRAME_SIZE])
     put_i16(frame + 18, scaled_i16(estimate.gyro_bias_rad_s * 57.2958f, 1000.0f));
 }
 
+_Static_assert(2 + AURA_TASK_COUNT * 2 <= AURA_FRAME_SIZE, "health frame holds every task counter");
+
+// [1] reset reason of this boot (esp_reset_reason_t), [2..19] the low 16 bits
+// of each task's liveness counter in aura_task_t order.
+static void make_health_frame(uint8_t frame[AURA_FRAME_SIZE])
+{
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_HEALTH;
+    frame[1] = (uint8_t)esp_reset_reason();
+    for (int task = 0; task < AURA_TASK_COUNT; ++task)
+        put_u16(frame + 2 + task * 2, (uint16_t)aura_health_beats((aura_task_t)task));
+}
+
 static void make_robot_body_reference_frame(uint8_t frame[AURA_FRAME_SIZE])
 {
     robot_gait_snapshot_t gait = {0};
-    robot_gait_snapshot(&gait);
+    telemetry_gait_snapshot(&gait);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_BODY_REFERENCE;
     frame[1] = 1 | (gait.body_preview_active ? 2 : 0);
@@ -537,7 +576,7 @@ static void make_servo_capacity_frame(uint8_t frame[AURA_FRAME_SIZE])
 static void make_robot_leg_frame(uint8_t frame[AURA_FRAME_SIZE], robot_leg_t leg)
 {
     robot_model_t model = {0};
-    robot_control_snapshot(&model);
+    telemetry_robot_snapshot(&model);
     memset(frame, 0, AURA_FRAME_SIZE);
     frame[0] = AURA_EVT_ROBOT_LEG;
     frame[1] = (uint8_t)leg;
@@ -1155,6 +1194,7 @@ static void command_task(void *argument)
     (void)argument;
     aura_command_t command;
     while (!shutdown_requested) {
+        aura_health_beat(AURA_TASK_COMMANDS);
         // Desktop commands are configuration/telemetry work.  The pad and
         // physical Create safety switch run in controller_task below, so a
         // TCP client or a busy application can never govern locomotion.
@@ -1175,6 +1215,7 @@ static void controller_task(void *argument)
     (void)argument;
     TickType_t wake = xTaskGetTickCount();
     while (!shutdown_requested) {
+        aura_health_beat(AURA_TASK_PAD);
         dualsense_poll();
         process_create_arm_switch();
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(10));
@@ -1195,6 +1236,7 @@ static void telemetry_task(void *argument)
     static aura_network_batch_t telemetry_batch;
     TickType_t wake = xTaskGetTickCount();
     while (!shutdown_requested) {
+        aura_health_beat(AURA_TASK_TELEMETRY);
         if (aura_network_connected()) {
             uint8_t frame[AURA_FRAME_SIZE];
             // AURA_TELEMETRY_HZ snapshots a second, each one TCP write of the
@@ -1222,6 +1264,8 @@ static void telemetry_task(void *argument)
             make_robot_body_reference_frame(frame);
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             make_robot_estimate_frame(frame);
+            aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+            make_health_frame(frame);
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             // Board-owned profiles synchronize independently of the 50 Hz
             // controller. The desktop never feeds targets back to Aura.
