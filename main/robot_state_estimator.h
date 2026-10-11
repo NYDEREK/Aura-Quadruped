@@ -17,7 +17,7 @@
 // X forward, Y up, Z left; heading > 0 turns left.
 
 #define ROBOT_ESTIMATOR_STATES 18
-#define ROBOT_ESTIMATOR_MAX_ROWS 15
+#define ROBOT_ESTIMATOR_MAX_ROWS 19   // 4 x (p - foot) + 4 foot heights + 3 still
 
 typedef struct {
     float dt;
@@ -37,7 +37,8 @@ typedef struct {
 typedef struct {
     bool valid;
     bool still;
-    robot_vec3_t position_mm;         // world
+    robot_vec3_t position_mm;         // world, torso
+    float ground_mm;                  // height of the ground under Aura: its lowest foot
     robot_vec3_t velocity_mm_s;       // world
     float heading_rad;
     float heading_sigma_rad;

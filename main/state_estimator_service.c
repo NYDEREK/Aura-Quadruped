@@ -24,6 +24,12 @@ static estimator_legs_t legs;
 static float accel_sum[3], gyro_sum[3];
 static unsigned imu_count;
 static bool rezero_requested;
+// This board's accelerometer reads about 1.17 g at rest. Taken as is, the
+// excess is a constant upward acceleration, and the still detector (1 g +/-
+// 0.04) never fires, so the gyro bias is never learned. The magnitude of
+// gravity is learned while Aura is quiet and divided out.
+static float gravity_g;
+#define GRAVITY_LEARN_RATE 0.02f      // per 20 ms step: ~1 s time constant
 static TaskHandle_t task;
 
 void estimator_service_add_imu(const imu_sample_t *sample)
@@ -87,6 +93,18 @@ static void estimator_task(void *argument)
         if (rezero) robot_estimator_rezero(&estimator);
         mpu6050_attitude_t attitude = {0};
         mpu6050_get_attitude(&attitude);
+        if (count) {
+            const float norm = sqrtf(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2]);
+            const bool quiet = !snapshot.walking && !snapshot.commanded &&
+                               fabsf(gyro[0]) < 3.0f && fabsf(gyro[1]) < 3.0f && fabsf(gyro[2]) < 3.0f;
+            if (norm > 0.7f && norm < 1.4f) {
+                if (gravity_g == 0) gravity_g = norm;
+                else if (quiet) gravity_g += GRAVITY_LEARN_RATE * (norm - gravity_g);
+            }
+            if (gravity_g > 0) {
+                for (int i = 0; i < 3; ++i) accel[i] /= gravity_g;
+            }
+        }
         if (count && attitude.valid) {
             const float m = ESTIMATOR_IMU_MOUNT_SIGN;
             robot_estimator_input_t input = {

@@ -104,7 +104,7 @@ struct AuraEstimate: Equatable {
     var available = false          // the firmware sends frame 0x32
     var valid = false
     var still = false
-    var x = 0.0, y = 0.0, z = 0.0  // mm
+    var x = 0.0, y = 0.0, z = 0.0  // mm; y is the ground height under Aura, not the torso
     var heading = 0.0              // rad
     var forward = 0.0, left = 0.0  // mm/s in the heading frame
     var gyroBias = 0.0             // deg/s

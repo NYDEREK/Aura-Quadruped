@@ -20,6 +20,11 @@
 #define SIGMA_FOOT_MM 1.0f
 #define SIGMA_FOOT_RELATIVE_MM 8.0f
 #define SIGMA_STILL_MM_S 4.0f
+// A planted foot is on the ground, taken as flat at height 0 (MIT's foot
+// height measurement). It anchors the vertical channel, which otherwise
+// drifts with any accelerometer error. Feet below this trust are not used.
+#define SIGMA_FOOT_HEIGHT_MM 5.0f
+#define FOOT_HEIGHT_MIN_TRUST 0.5f
 #define SWING_FREEDOM 1.0e5f
 #define SUSPECT 9.0f
 // Heading filter: gyro white noise, bias random walk, zero-rate noise.
@@ -123,12 +128,13 @@ static bool cholesky_solve(float *S, int m, float *B, int n)
     return true;
 }
 
-typedef struct { int kind; int leg; int axis; } row_t;   // kind 0: p - foot, 1: velocity
+typedef struct { int kind; int leg; int axis; } row_t;   // kind 0: p - foot, 1: velocity, 2: foot height
 
 // Entry of measurement row r for state index `state`.
 static float h_entry(row_t r, int state)
 {
     if (r.kind == 0) return (state == r.axis ? 1.0f : 0.0f) - (state == 6 + 3 * r.leg + r.axis ? 1.0f : 0.0f);
+    if (r.kind == 2) return state == 7 + 3 * r.leg ? 1.0f : 0.0f;
     return state == 3 + r.axis ? 1.0f : 0.0f;
 }
 
@@ -160,6 +166,11 @@ void robot_estimator_step(robot_estimator_t *e, const robot_estimator_input_t *i
         relative[leg] = to_world(in->feet_body_mm[leg], in->roll_rad, in->pitch_rad, e->heading);
 
     if (!e->feet_initialized) {
+        // Start with the feet on the ground (height 0) and the body above
+        // them, so the foot height measurement has nothing to pull at once.
+        float stand = 0;
+        for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) stand -= relative[leg].y / ROBOT_LEG_COUNT;
+        e->x[1] = stand;
         for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
             e->x[6 + 3 * leg] = e->x[0] + relative[leg].x;
             e->x[7 + 3 * leg] = e->x[1] + relative[leg].y;
@@ -213,6 +224,14 @@ void robot_estimator_step(robot_estimator_t *e, const robot_estimator_input_t *i
             ++m;
         }
     }
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        const float trust = clampf(in->trust[leg], 0, 1);
+        if (!in->feet_valid[leg] || trust < FOOT_HEIGHT_MIN_TRUST) continue;
+        rows[m] = (row_t){2, leg, 1};
+        y[m] = 0;
+        noise[m] = SIGMA_FOOT_HEIGHT_MM * SIGMA_FOOT_HEIGHT_MM / trust;
+        ++m;
+    }
     if (e->still && planted) {
         for (int k = 0; k < 3; ++k) {
             rows[m] = (row_t){1, 0, k};
@@ -232,6 +251,8 @@ void robot_estimator_step(robot_estimator_t *e, const robot_estimator_input_t *i
             float v = 0;
             if (rows[j].kind == 0)
                 v = e->P[r * N + rows[j].axis] - e->P[r * N + 6 + 3 * rows[j].leg + rows[j].axis];
+            else if (rows[j].kind == 2)
+                v = e->P[r * N + 7 + 3 * rows[j].leg];
             else
                 v = e->P[r * N + 3 + rows[j].axis];
             PHt[r * m + j] = v;
@@ -249,6 +270,8 @@ void robot_estimator_step(robot_estimator_t *e, const robot_estimator_input_t *i
             float v = 0;
             if (rows[i].kind == 0)
                 v = PHt[rows[i].axis * m + j] - PHt[(6 + 3 * rows[i].leg + rows[i].axis) * m + j];
+            else if (rows[i].kind == 2)
+                v = PHt[(7 + 3 * rows[i].leg) * m + j];
             else
                 v = PHt[(3 + rows[i].axis) * m + j];
             S[i * m + j] = v + (i == j ? noise[i] : 0);
@@ -281,10 +304,16 @@ void robot_estimator_get(const robot_estimator_t *e, robot_estimate_t *out)
 {
     if (!e || !out) return;
     const float c = cosf(e->heading), s = sinf(e->heading);
+    float ground = 0;
+    if (e->feet_initialized) {
+        ground = e->x[7];
+        for (int leg = 1; leg < ROBOT_LEG_COUNT; ++leg) ground = fminf(ground, e->x[7 + 3 * leg]);
+    }
     *out = (robot_estimate_t){
         .valid = e->valid,
         .still = e->still,
         .position_mm = {e->x[0], e->x[1], e->x[2]},
+        .ground_mm = ground,
         .velocity_mm_s = {e->x[3], e->x[4], e->x[5]},
         .heading_rad = e->heading,
         .heading_sigma_rad = sqrtf(fmaxf(0.0f, e->h00)),

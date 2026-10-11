@@ -12,6 +12,7 @@
 #define DT 0.02f
 
 static unsigned seed = 1;
+static float accel_bias_y;   // mm/s^2 on the vertical accelerometer reading
 static float noise(float sigma)
 {
     seed = seed * 1103515245u + 12345u;
@@ -69,7 +70,7 @@ static robot_estimator_input_t tick(truth_t *t, float speed, float turn_rate, bo
         in.feet_valid[leg] = true;
     }
     in.yaw_rate_rad_s = turn_rate + 1.0f * PI / 180.0f + noise(0.3f * PI / 180.0f);
-    in.accel_mm_s2 = (robot_vec3_t){noise(400), 9810.0f + noise(400), noise(400)};
+    in.accel_mm_s2 = (robot_vec3_t){noise(400), 9810.0f + accel_bias_y + noise(400), noise(400)};
     return in;
 }
 
@@ -125,6 +126,24 @@ int main(void)
     robot_estimator_rezero(&e);
     robot_estimator_get(&e, &out);
     assert(out.position_mm.x == 0 && out.heading_rad == 0 && out.gyro_bias_rad_s == bias);
+    // 6. A vertical accelerometer error (0.16 g, as Aura's IMU had before
+    // its gravity was normalised) while walking: the planted feet hold the
+    // ground at 0 and the torso at its height instead of drifting upward.
+    start(&t, &e);
+    accel_bias_y = 1600.0f;
+    for (int i = 0; i < 100; ++i) { robot_estimator_input_t in = tick(&t, 0, 0, true, false); robot_estimator_step(&e, &in); }
+    robot_estimator_get(&e, &out);
+    const float stand = out.position_mm.y;
+    for (int i = 0; i < 1000; ++i) { robot_estimator_input_t in = tick(&t, 150, 0, true, true); robot_estimator_step(&e, &in); }
+    robot_estimator_get(&e, &out);
+    const float biased_error = hypotf(out.position_mm.x - t.x, out.position_mm.z - t.z);
+    printf("  vertical accel error: ground %.1f mm, torso %+.1f mm from start, position error %.0f mm\n",
+           out.ground_mm, out.position_mm.y - stand, biased_error);
+    assert(fabsf(out.ground_mm) < 25.0f);
+    assert(fabsf(out.position_mm.y - stand) < 30.0f);
+    assert(biased_error < 0.05f * hypotf(t.x, t.z));
+    accel_bias_y = 0;
+
     puts("state estimator tests passed");
     return 0;
 }

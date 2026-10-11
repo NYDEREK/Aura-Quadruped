@@ -523,7 +523,7 @@ static void make_robot_estimate_frame(uint8_t frame[AURA_FRAME_SIZE])
     frame[1] = (estimate.valid ? 1 : 0) | (estimate.still ? 2 : 0);
     put_u32(frame + 2, (uint32_t)scaled_i32(estimate.position_mm.x, 10.0f));
     put_u32(frame + 6, (uint32_t)scaled_i32(estimate.position_mm.z, 10.0f));
-    put_i16(frame + 10, scaled_i16(estimate.position_mm.y, 1.0f));
+    put_i16(frame + 10, scaled_i16(estimate.ground_mm, 1.0f));   // ground height, not the torso
     put_i16(frame + 12, scaled_i16(estimate.heading_rad, 18000.0f / 3.14159265f));
     put_i16(frame + 14, scaled_i16(estimate.forward_mm_s, 1.0f));
     put_i16(frame + 16, scaled_i16(estimate.left_mm_s, 1.0f));
