@@ -35,9 +35,16 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGW(TAG, "Wi-Fi disconnected: reason=%u", event->reason);
     }
 }
+// Bytes accepted for sending but not yet taken by the socket. Frames are never
+// cut: whatever a short write leaves behind goes out first next time, so a
+// Wi-Fi stall delays the stream instead of breaking its framing.
+static uint8_t backlog[2048];
+static size_t backlog_used;
+
 static void close_client(void)
 {
     if (client >= 0) { shutdown(client, SHUT_RDWR); close(client); client = -1; }
+    backlog_used = 0;
 }
 bool aura_network_connected(void)
 {
@@ -47,17 +54,53 @@ bool aura_network_connected(void)
     xSemaphoreGive(socket_lock);
     return connected;
 }
+
+// Socket lock held. Returns false when the client had to be dropped.
+static bool flush_backlog(void)
+{
+    while (backlog_used) {
+        int sent = send(client, backlog, backlog_used, MSG_DONTWAIT);
+        if (sent > 0) {
+            backlog_used -= (size_t)sent;
+            memmove(backlog, backlog + sent, backlog_used);
+        } else if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        } else {
+            close_client();
+            return false;
+        }
+    }
+    return true;
+}
+
+// Socket lock held. A droppable write (a telemetry cycle) is skipped whole
+// while the link is still catching up; replies and events are always kept.
+// Only a reader that stays stalled until the backlog is full is dropped.
+static void write_frames(const uint8_t *data, size_t size, bool droppable)
+{
+    if (!running || !has_ip || client < 0) return;
+    if (!flush_backlog()) return;
+    size_t done = 0;
+    if (!backlog_used) {
+        int sent = send(client, data, size, MSG_DONTWAIT);
+        if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { close_client(); return; }
+        done = sent > 0 ? (size_t)sent : 0;
+        if (done == size || (droppable && done == 0)) return;
+    } else if (droppable) {
+        return;
+    }
+    if (backlog_used + size - done > sizeof(backlog)) { close_client(); return; }
+    memcpy(backlog + backlog_used, data + done, size - done);
+    backlog_used += size - done;
+}
+
 void aura_network_send(uint8_t channel, const uint8_t *data, size_t size)
 {
     if (!socket_lock || !size || size > 20) return;
     uint8_t packet[22] = {channel, (uint8_t)size};
     memcpy(packet + 2, data, size);
     xSemaphoreTake(socket_lock, portMAX_DELAY);
-    if (running && has_ip && client >= 0) {
-        // Never accumulate an unbounded telemetry backlog. A stalled reader reconnects.
-        int sent = send(client, packet, size + 2, MSG_DONTWAIT);
-        if (sent != (int)size + 2) close_client();
-    }
+    write_frames(packet, size + 2, false);
     xSemaphoreGive(socket_lock);
 }
 void aura_network_batch_send(aura_network_batch_t *batch)
@@ -65,12 +108,7 @@ void aura_network_batch_send(aura_network_batch_t *batch)
     if (!batch || !batch->used) return;
     if (socket_lock) {
         xSemaphoreTake(socket_lock, portMAX_DELAY);
-        if (running && has_ip && client >= 0) {
-            // Same rule as single frames: a partial write would break the
-            // framing, so a stalled reader is dropped and reconnects.
-            int sent = send(client, batch->data, batch->used, MSG_DONTWAIT);
-            if (sent != (int)batch->used) close_client();
-        }
+        write_frames(batch->data, batch->used, true);
         xSemaphoreGive(socket_lock);
     }
     batch->used = 0;

@@ -1183,20 +1183,23 @@ static void controller_task(void *argument)
     vTaskDelete(NULL);
 }
 
+// Desktop telemetry rate. The robot's own control loops run at 50 Hz
+// regardless; this only sets how often the app gets a snapshot.
+#define AURA_TELEMETRY_HZ 10
+
 static void telemetry_task(void *argument)
 {
     (void)argument;
     unsigned tick = 0;
     // The whole cycle leaves as one TCP write (~16 frames, ~350 bytes).
     static aura_network_batch_t telemetry_batch;
+    TickType_t wake = xTaskGetTickCount();
     while (!shutdown_requested) {
         if (aura_network_connected()) {
             uint8_t frame[AURA_FRAME_SIZE];
-            // 50 Hz telemetry keeps the desktop simulation and current trace
-            // in step with live controls. A cycle's frames (22 bytes each)
-            // leave as one TCP write, and MSG_DONTWAIT drops a stalled
-            // desktop client instead of accumulating latency on the shared
-            // Wi-Fi / Bluetooth radio.
+            // AURA_TELEMETRY_HZ snapshots a second, each one TCP write of the
+            // cycle's frames (22 bytes each). A Wi-Fi stall skips cycles
+            // rather than queueing them, so the desktop never lags behind.
             make_power_frame(frame);
             memcpy(last_power, frame, sizeof(last_power));
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
@@ -1222,7 +1225,7 @@ static void telemetry_task(void *argument)
             aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             // Board-owned profiles synchronize independently of the 50 Hz
             // controller. The desktop never feeds targets back to Aura.
-            if (tick % 50 == 0) {
+            if (tick % AURA_TELEMETRY_HZ == 0) {      // once a second
                 for (int gait = ROBOT_GAIT_TROT; gait <= ROBOT_GAIT_TRIPOD; ++gait) {
                     make_robot_gait_profile_frame(frame, (robot_gait_mode_t)gait);
                     aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
@@ -1236,11 +1239,11 @@ static void telemetry_task(void *argument)
                 make_robot_leg_frame(frame, (robot_leg_t)leg);
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
-            if (tick % 10 == 0) {
+            if (tick % 2 == 0) {                       // 5 Hz
                 make_servo_capacity_frame(frame);
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
-            if (tick % 50 == 0) {
+            if (tick % AURA_TELEMETRY_HZ == 0) {      // once a second
                 make_tof_diagnostics_frame(frame);
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
                 send_dualsense_status();
@@ -1255,7 +1258,7 @@ static void telemetry_task(void *argument)
             aura_network_batch_send(&telemetry_batch);
             ++tick;
         }
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(1000 / AURA_TELEMETRY_HZ));
     }
     telemetry_task_handle = NULL;
     vTaskDelete(NULL);
