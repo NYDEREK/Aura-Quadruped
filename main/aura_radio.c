@@ -26,6 +26,7 @@
 #include "robot_control.h"
 #include "robot_gait.h"
 #include "tof.h"
+#include "state_estimator_service.h"
 #include "status_led.h"
 #include "ws2812.h"
 
@@ -99,6 +100,8 @@ enum {
     // Status strip brightness: `2e` reads, `2e percent` saves (0...100).
     // The result detail byte carries the brightness now in use.
     AURA_CMD_LED_BRIGHTNESS = 0x2e,
+    // Sets the state estimator's position and heading to zero (RAM only).
+    AURA_CMD_ESTIMATOR_REZERO = 0x2f,
     AURA_EVT_POWER = 0x10,
     AURA_EVT_IMU = 0x11,
     AURA_EVT_TOF = 0x12,
@@ -127,6 +130,9 @@ enum {
     // One persisted set of moving-controller gains and trajectory limits.
     AURA_EVT_ROBOT_MOTION_TUNING = 0x30,
     AURA_EVT_ROBOT_BODY_REFERENCE = 0x31,
+    // Kalman estimate: position 0.1 mm (x, z), height mm, heading cdeg,
+    // velocity forward/left mm/s, gyro bias in 0.001 deg/s.
+    AURA_EVT_ROBOT_ESTIMATE = 0x32,
 };
 
 typedef struct {
@@ -480,6 +486,22 @@ static void make_robot_pose_frame(uint8_t frame[AURA_FRAME_SIZE])
     put_u32(frame + 6, (uint32_t)scaled_i32(gait.odometry_z_mm, 10.0f));
     put_i16(frame + 10, scaled_i16(gait.odometry_yaw_radians, 18000.0f / 3.14159265f));
     put_u32(frame + 12, gait.tick_count);
+}
+
+static void make_robot_estimate_frame(uint8_t frame[AURA_FRAME_SIZE])
+{
+    robot_estimate_t estimate;
+    estimator_service_get(&estimate);
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_ROBOT_ESTIMATE;
+    frame[1] = (estimate.valid ? 1 : 0) | (estimate.still ? 2 : 0);
+    put_u32(frame + 2, (uint32_t)scaled_i32(estimate.position_mm.x, 10.0f));
+    put_u32(frame + 6, (uint32_t)scaled_i32(estimate.position_mm.z, 10.0f));
+    put_i16(frame + 10, scaled_i16(estimate.position_mm.y, 1.0f));
+    put_i16(frame + 12, scaled_i16(estimate.heading_rad, 18000.0f / 3.14159265f));
+    put_i16(frame + 14, scaled_i16(estimate.forward_mm_s, 1.0f));
+    put_i16(frame + 16, scaled_i16(estimate.left_mm_s, 1.0f));
+    put_i16(frame + 18, scaled_i16(estimate.gyro_bias_rad_s * 57.2958f, 1000.0f));
 }
 
 static void make_robot_body_reference_frame(uint8_t frame[AURA_FRAME_SIZE])
@@ -955,6 +977,11 @@ static void process_command(const aura_command_t *command)
         detail = (uint8_t)gait;
         break;
     }
+    case AURA_CMD_ESTIMATOR_REZERO:
+        if (command->size != 1) break;
+        estimator_service_rezero();
+        result = ESP_OK;
+        break;
     case AURA_CMD_LED_BRIGHTNESS:
         if (command->size == 1) result = ESP_OK;
         else if (command->size == 2 && command->data[1] <= 100)
@@ -1187,6 +1214,8 @@ static void telemetry_task(void *argument)
             make_robot_pose_frame(frame);
             notify(telemetry_handle, frame, sizeof(frame), true);
             make_robot_body_reference_frame(frame);
+            notify(telemetry_handle, frame, sizeof(frame), true);
+            make_robot_estimate_frame(frame);
             notify(telemetry_handle, frame, sizeof(frame), true);
             // Board-owned profiles synchronize independently of the 50 Hz
             // controller. The desktop never feeds targets back to Aura.

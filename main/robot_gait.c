@@ -25,6 +25,7 @@
 #include "robot_kinematics.h"
 #include "robot_odometry.h"
 #include "robot_walk_balance.h"
+#include "state_estimator_service.h"
 #include "mpu6050.h"
 
 #define ROBOT_GAIT_PERIOD_MS 20
@@ -1500,6 +1501,40 @@ static void calibration_test_tick(const gait_input_t *input)
     ++state.tick_count;
 }
 
+// Leg kinematics for the state estimator: FK of the measured joints, each
+// axis aligned to this tick with its measured speed (at most 60 ms), and how
+// much each foot can be trusted as planted (ramped at both ends of stance).
+static void publish_estimator_legs(const robot_model_t *feedback, bool armed, bool walking,
+                                   bool commanded)
+{
+    estimator_legs_t legs = {.armed = armed, .walking = walking, .commanded = commanded};
+    const int64_t now = esp_timer_get_time();
+    const float duty = gait_duty(state.active_gait);
+    for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
+        float q[ROBOT_AXIS_COUNT];
+        bool fresh = true;
+        for (int axis = 0; axis < ROBOT_AXIS_COUNT; ++axis) {
+            const robot_axis_state_t *servo = &feedback->axis[leg][axis];
+            const int64_t age = now - servo->feedback_time_us;
+            fresh &= servo->present && servo->feedback_time_us > 0 && age >= 0 && age < 120000;
+            const float dt = clampf((float)age * 1e-6f, 0, 0.060f);
+            q[axis] = servo->measured_radians + dt * servo->measured_speed_raw *
+                servo->config.direction * (2.0f * ROBOT_PI / 4096.0f);
+        }
+        legs.feet_valid[leg] = fresh;
+        legs.feet_body_mm[leg] = robot_kinematics_forward(&geometry, (robot_leg_t)leg, q, 0.0f);
+        if (!walking || duty <= 0.0f) {
+            legs.trust[leg] = 1.0f;
+        } else {
+            float local = phase + leg_phase_offset(leg, state.active_gait);
+            local -= floorf(local);
+            const float s = local / duty;
+            legs.trust[leg] = local < duty ? clampf(fminf(s, 1.0f - s) / 0.15f, 0.0f, 1.0f) : 0.0f;
+        }
+    }
+    estimator_service_set_legs(&legs);
+}
+
 static bool trot_four_feet_down(float global_phase)
 {
     const float duty = robot_locomotion_duty_factor(&trot_profile);
@@ -1587,6 +1622,7 @@ static void gait_tick(void)
         state.swing_balance_active = false;
         state.constrained_leg_mask = 0;
         calibration_test_tick(&input);
+        estimator_service_set_legs(&(estimator_legs_t){0});
         return;
     }
     // Pad mode 5 stands for now: three-leg walking is parked, whatever the
@@ -1908,6 +1944,7 @@ static void gait_tick(void)
     state.body_height_mm = (int16_t)lroundf(body_height + jump_lift);
     const float applied_phase_rate = (use_static_crawl || tripod_active) ? phase_rate : 1.0f;
     state.phase_rate_percent = (uint8_t)lroundf(applied_phase_rate * 100.0f);
+    publish_estimator_legs(&feedback, armed && !jumping, motion_active, magnitude > 0.02f);
     update_odometry(&feedback, armed, motion_active, tripod_active ? false : jumping,
                     spin || turning,
                     body_height + jump_lift);

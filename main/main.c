@@ -23,6 +23,7 @@
 #include "robot_control.h"
 #include "robot_gait.h"
 #include "servo_bus.h"
+#include "state_estimator_service.h"
 #include "status_led.h"
 #include "tof.h"
 #include "ws2812.h"
@@ -190,6 +191,12 @@ static void print_status(void)
            gait.phase_milli, gait.input_forward_milli, gait.input_lateral_milli,
            gait.input_turn_milli, gait.spin_mode, gait.jumping, gait.virtual_input,
            gait.phase_rate_percent, (unsigned long)gait.tick_count);
+    robot_estimate_t estimate;
+    estimator_service_get(&estimate);
+    printf("Estimator: valid=%d still=%d pos=%.0f:%.0f:%.0f mm heading=%.1f deg speed=%.0f mm/s gyro bias=%.3f deg/s\n",
+           estimate.valid, estimate.still, estimate.position_mm.x, estimate.position_mm.y, estimate.position_mm.z,
+           estimate.heading_rad * 57.2958f, hypotf(estimate.velocity_mm_s.x, estimate.velocity_mm_s.z),
+           estimate.gyro_bias_rad_s * 57.2958f);
     printf("Trot (mode 4): walking=%d capture=%.1f:%.1f support=%.1f:%.1f learned CoM=%.1f:%.1f mm (X fwd:Z left)\n",
            gait.trot_walking, gait.trot_capture_x_mm, gait.trot_capture_z_mm,
            gait.trot_support_x_mm, gait.trot_support_z_mm,
@@ -420,6 +427,7 @@ static void telemetry_task(void *argument)
         imu_sample_t sample;
         const esp_err_t result = mpu6050_read(&sample);
         app_state_set_imu_sample(result, &sample);
+        if (result == ESP_OK) estimator_service_add_imu(&sample);
         if (++report_divider >= 100) {
             print_status();
             report_divider = 0;
@@ -595,14 +603,16 @@ void app_main(void)
 
     BaseType_t blink_started = xTaskCreate(blink_task, "board_led", 2048, NULL, 3, NULL);
     BaseType_t telemetry_started = xTaskCreate(telemetry_task, "telemetry", 4096, NULL, 4, NULL);
+    const esp_err_t estimator_started = estimator_service_start();
     BaseType_t indicator_started = xTaskCreate(state_indicator_task, "state_indicator", 3072, NULL, 3, NULL);
     BaseType_t vin_guard_started = xTaskCreate(vin_radio_guard_task, "vin_radio_guard", 8192,
                                                NULL, 6, NULL);
     BaseType_t console_started = console_init == ESP_OK
         ? xTaskCreate(console_task, "console", 4096, NULL, 5, NULL) : pdFAIL;
-    printf("Tasks: LED=%s telemetry=%s state indicator=%s VIN/radio guard=%s console=%s\n",
+    printf("Tasks: LED=%s telemetry=%s estimator=%s state indicator=%s VIN/radio guard=%s console=%s\n",
            blink_started == pdPASS ? "OK" : "FAILED",
            telemetry_started == pdPASS ? "OK" : "FAILED",
+           esp_err_to_name(estimator_started),
            indicator_started == pdPASS ? "OK" : "FAILED",
            vin_guard_started == pdPASS ? "OK" : "FAILED",
            console_started == pdPASS ? "OK" : "FAILED");
