@@ -3,23 +3,6 @@ import Foundation
 import SwiftUI
 
 
-private struct AuraGroupBoxStyle: GroupBoxStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            configuration.label
-                .font(.headline)
-            configuration.content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
-        }
-    }
-}
-
 struct ServoFeedback: Decodable {
     let id: Int
     let status_error: Int
@@ -37,233 +20,91 @@ struct Metric: View {
     let title: String
     let value: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.monospacedDigit()).fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(Theme.label).foregroundStyle(Theme.muted).lineLimit(1)
+            Text(value).font(Theme.mono).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-struct CurrentChart: View {
-    let samples: [CurrentPoint]
-
-    var body: some View {
-        GeometryReader { geometry in
-            let values = samples.isEmpty ? [0.0] : samples.map(\.amperes)
-            let low = min(values.min() ?? 0, 0)
-            let high = max(values.max() ?? 0, 0)
-            let span = max(high - low, 0.01)
-            let width = geometry.size.width
-            let height = geometry.size.height
-            let step = samples.count > 1 ? width / CGFloat(samples.count - 1) : 0
-            let zeroY = height - CGFloat((0 - low) / span) * height
-
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.35))
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: zeroY))
-                    for (index, sample) in samples.enumerated() {
-                        let y = height - CGFloat((sample.amperes - low) / span) * height
-                        path.addLine(to: CGPoint(x: CGFloat(index) * step, y: y))
-                    }
-                    path.addLine(to: CGPoint(x: width, y: zeroY))
-                    path.closeSubpath()
-                }
-                .fill(.blue.opacity(0.15))
-                Path { path in
-                    for (index, sample) in samples.enumerated() {
-                        let point = CGPoint(
-                            x: CGFloat(index) * step,
-                            y: height - CGFloat((sample.amperes - low) / span) * height)
-                        if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
-                    }
-                }
-                .stroke(.blue, style: StrokeStyle(lineWidth: 2, lineJoin: .round))
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: zeroY))
-                    path.addLine(to: CGPoint(x: width, y: zeroY))
-                }
-                .stroke(.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                VStack(alignment: .leading) {
-                    Text(String(format: "%.3f A", high))
-                    Spacer()
-                    Text(String(format: "%.3f A", low))
-                }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .padding(6)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Wykres prądu serw z ostatniej minuty")
-        .accessibilityValue(String(format: "%.3f A", samples.last?.amperes ?? 0))
-    }
-}
-
-struct DashboardView: View {
-    @EnvironmentObject var aura: AuraConnection
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Aura Main Board").font(.title2.bold())
-                if aura.isConnected {
-                    HStack {
-                        Metric(title: "Magistrala serw", value: String(format: "%.2f V", aura.power.servoBusVoltage))
-                        Metric(title: "Prąd", value: String(format: "%.3f A", aura.power.current))
-                        Metric(title: "Moc", value: String(format: "%.3f W", aura.power.power))
-                        Metric(title: "Zużycie serw", value: String(format: "%.3f mAh", aura.power.servoConsumedMilliampHours))
-                        Metric(title: "VIN", value: String(format: "%.2f V", aura.power.inputVoltage))
-                    }
-                    GroupBox("Prąd serw • ostatnia minuta") {
-                        CurrentChart(samples: aura.currentHistory)
-                        .frame(height: 210)
-                        .padding(.top, 6)
-                    }
-                    GroupBox("MPU6050 · S1") {
-                        if aura.power.imuAvailable {
-                            VStack(alignment: .leading) {
-                                Text(String(format: "Accel: %.3f  %.3f  %.3f g", aura.imu.acceleration[0], aura.imu.acceleration[1], aura.imu.acceleration[2]))
-                                Text(String(format: "Roll / pitch: %.1f° / %.1f°", aura.attitude.rollDegrees, aura.attitude.pitchDegrees))
-                                Text(String(format: "Temperatura: %.1f °C", aura.imu.temperature))
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text(String(format: "Brak odpowiedzi — WHO_AM_I 0x%02X", aura.power.imuIdentity))
-                                .foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                } else {
-                    ContentUnavailableView("Brak danych", systemImage: "waveform.slash", description: Text("Połącz aplikację z płytką przez Wi-Fi."))
-                }
-            }.padding()
-        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.line, lineWidth: 1))
     }
 }
 
 struct IMUView: View {
     @EnvironmentObject var aura: AuraConnection
+    @EnvironmentObject var history: TelemetryHistory
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("MPU6050 · S1").font(.title2.bold())
-                        Text("I²C na GPIO25/26, DATA_RDY na GPIO14.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Sprawdź MPU6050") { aura.reinitializeIMU() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!aura.isConnected || aura.busy)
+        let _ = history.revision
+        let samples = history.window(seconds: 30, maximumPoints: 240)
+        let attitude = aura.attitude
+        let available = aura.power.imuAvailable
+        Page {
+            HStack(spacing: 12) {
+                StatusDot(color: available ? Theme.green : Theme.orange,
+                          text: available ? "MPU6050 · I²C 0x68 · S1" : "MPU6050 nie odpowiada")
+                Text(String(format: "WHO_AM_I 0x%02X", aura.power.imuIdentity))
+                    .font(Theme.monoSmall).foregroundStyle(Theme.muted)
+                Spacer()
+                Button("Sprawdź MPU6050") { aura.reinitializeIMU() }
+                    .controlSize(.small)
+                    .disabled(!aura.isConnected || aura.busy)
+            }
+            if available {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                    Stat(label: "Roll", value: String(format: "%+.1f°", attitude.rollDegrees))
+                    Stat(label: "Pitch", value: String(format: "%+.1f°", attitude.pitchDegrees))
+                    Stat(label: "Referencja", value: String(format: "%+.1f° %+.1f°",
+                                                             attitude.referenceRollDegrees, attitude.referencePitchDegrees))
+                    Stat(label: "Korekcja", value: String(format: "%+.1f° %+.1f°",
+                                                           attitude.correctionRollDegrees, attitude.correctionPitchDegrees))
+                    Stat(label: "Filtr", value: attitude.valid ? "gotowy" : "stabilizacja",
+                         tint: attitude.valid ? Theme.green : Theme.yellow)
+                    Stat(label: "Temperatura", value: String(format: "%.1f °C", aura.imu.temperature))
                 }
-
-                GroupBox("Stan komunikacji") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Label(aura.power.imuAvailable ? "MPU6050 odpowiada" : "Brak odpowiedzi MPU6050",
-                                  systemImage: aura.power.imuAvailable
-                                      ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(aura.power.imuAvailable ? .green : .orange)
-                            Spacer()
-                            Text(String(format: "WHO_AM_I: 0x%02X", aura.power.imuIdentity))
-                                .monospacedDigit()
-                        }
-                        HStack {
-                            Metric(title: "Próbki", value: "\(aura.imu.sampleCount)")
-                            Metric(title: "Oczekiwane ID", value: "0x68")
-                            Metric(title: "Interfejs", value: "I²C · S1")
-                        }
+                HStack(alignment: .top, spacing: 12) {
+                    Panel("Orientacja") {
+                        IMUAttitudePreview(rollDegrees: attitude.rollDegrees, pitchDegrees: attitude.pitchDegrees,
+                                           valid: attitude.valid)
+                            .frame(height: 240)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                }
-
-                if aura.power.imuAvailable {
-                    GroupBox("Postawa korpusu") {
-                        HStack {
-                            Metric(title: "Roll", value: String(format: "%.1f°", aura.attitude.rollDegrees))
-                            Metric(title: "Pitch", value: String(format: "%.1f°", aura.attitude.pitchDegrees))
-                            Metric(title: "Filtr", value: aura.attitude.valid ? "gotowy" : "stabilizacja…")
-                        }
-                        .padding(.bottom, 6)
-                        HStack {
-                            Metric(title: "Referencja roll", value: String(format: "%.1f°", aura.attitude.referenceRollDegrees))
-                            Metric(title: "Referencja pitch", value: String(format: "%.1f°", aura.attitude.referencePitchDegrees))
-                            Metric(title: "Korekta", value: aura.attitude.referencePending
-                                ? "ustalanie pozycji…"
-                                : (aura.attitude.active ? "aktywna" : "wyłączona"))
-                        }
-
-                        Toggle("Korekcja postawy po uzbrojeniu", isOn: Binding(
-                            get: { aura.attitude.enabled },
-                            set: { aura.setAttitudeBalance(enabled: $0) }
-                        ))
-                        .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
-                        .padding(.top, 10)
-
-                        Picker("Maksymalna korekta", selection: Binding(
+                    .help("Test znaku bez momentu: unieś przód — czerwona krawędź modelu idzie w górę; unieś lewy bok — lewa krawędź idzie w górę.")
+                    Panel("Korekcja postawy") {
+                        Toggle("Włączona po uzbrojeniu", isOn: Binding(
+                            get: { aura.attitude.enabled }, set: { aura.setAttitudeBalance(enabled: $0) }))
+                            .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
+                        Picker("Limit", selection: Binding(
                             get: { Int(aura.attitude.maximumCorrectionDegrees.rounded()) },
-                            set: { aura.setAttitudeCorrectionLimit(degrees: Double($0)) }
-                        )) {
-                            Text("7°").tag(7)
-                            Text("10°").tag(10)
-                            Text("15°").tag(15)
-                            Text("20°").tag(20)
+                            set: { aura.setAttitudeCorrectionLimit(degrees: Double($0)) })) {
+                            Text("7°").tag(7); Text("10°").tag(10); Text("15°").tag(15); Text("20°").tag(20)
                         }
                         .pickerStyle(.segmented)
                         .disabled(!aura.isConnected || aura.busy || aura.robotState.armed)
-
-                        Text("Po Create Aura najpierw spokojnie dojeżdża do pozycji stania, a potem zapisuje ją jako referencję IMU. Dzięki temu luźna pozycja sprzed uzbrojenia nie staje się błędnym poziomem korpusu. Korekta działa również w staniu. Wybrany limit jest \(Int(aura.attitude.maximumCorrectionDegrees.rounded()))°; przy błędzie postawy większym niż 25° Aura zatrzymuje korektę zamiast próbować ratować upadek dużym ruchem.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        ValueRow(label: "Stan", value: attitude.referencePending ? "ustalanie referencji"
+                                 : attitude.active ? "aktywna" : "wyłączona",
+                                 tint: attitude.active ? Theme.green : Theme.muted)
+                        ValueRow(label: "Próbki", value: "\(aura.imu.sampleCount)")
                     }
-
-                    GroupBox("Kalibracja kierunku IMU") {
-                        IMUAttitudePreview(rollDegrees: aura.attitude.rollDegrees,
-                                           pitchDegrees: aura.attitude.pitchDegrees,
-                                           valid: aura.attitude.valid)
-                            .frame(height: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Model ma stałą kamerę i jest obracany tylko przez filtr MPU6050. Czerwona krawędź oznacza przód ramy; oś czerwona X wskazuje przód, zielona Y górę, niebieska Z lewą stronę.")
-                            Text("Test bez momentu: unieś przód robota — czerwona krawędź na modelu też musi pójść do góry. Następnie unieś lewą stronę — lewa krawędź modelu ma pójść do góry. Jeśli którykolwiek znak jest odwrotny, nie włączaj korekcji postawy; zmienimy mapowanie osi w jednym miejscu w firmware.")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 6)
-                    }
-
-                    GroupBox("Przyspieszenie i prędkość kątowa") {
-                        HStack {
-                            Metric(title: "Accel X", value: String(format: "%.3f g", aura.imu.acceleration[0]))
-                            Metric(title: "Accel Y", value: String(format: "%.3f g", aura.imu.acceleration[1]))
-                            Metric(title: "Accel Z", value: String(format: "%.3f g", aura.imu.acceleration[2]))
-                            Metric(title: "Temperatura", value: String(format: "%.1f °C", aura.imu.temperature))
-                        }
-                        HStack {
-                            Metric(title: "Gyro X", value: String(format: "%.2f °/s", aura.imu.gyroscope[0]))
-                            Metric(title: "Gyro Y", value: String(format: "%.2f °/s", aura.imu.gyroscope[1]))
-                            Metric(title: "Gyro Z", value: String(format: "%.2f °/s", aura.imu.gyroscope[2]))
-                        }
-                        .padding(.top, 8)
-                    }
-                } else {
-                    ContentUnavailableView(
-                        "MPU6050 nie odpowiada po I²C",
-                        systemImage: "waveform.path.ecg.rectangle",
-                        description: Text("Sprawdź zasilanie 3,3 V oraz SDA GPIO25, SCL GPIO26 i ponów test."))
+                    .frame(width: 260)
                 }
-
-                GroupBox("Montaż i połączenia") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("SDA GPIO25    SCL GPIO26    INT / DATA_RDY GPIO14")
-                            .font(.body.monospaced())
-                        Text("Kod zakłada montaż: oś X modułu do przodu, Y w lewo, Z do góry. Przed włączeniem korekcji sprawdź na rozbrojonym robocie, czy przechylenie w każdą stronę daje właściwy znak roll/pitch.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
+                    TimeChart(title: "Przechył", unit: "°", samples: samples, series: [
+                        Series(name: "roll", color: Theme.blue) { $0.roll },
+                        Series(name: "pitch", color: Theme.orange) { $0.pitch }], format: "%+.1f")
+                    TimeChart(title: "Żyroskop", unit: "°/s", samples: samples, series: [
+                        Series(name: "x", color: Theme.red) { $0.gyro.x },
+                        Series(name: "y", color: Theme.green) { $0.gyro.y },
+                        Series(name: "z", color: Theme.blue) { $0.gyro.z }], format: "%+.1f")
+                    TimeChart(title: "Przyspieszenie", unit: "g", samples: samples, series: [
+                        Series(name: "x", color: Theme.red) { $0.accel.x },
+                        Series(name: "y", color: Theme.green) { $0.accel.y },
+                        Series(name: "z", color: Theme.blue) { $0.accel.z }], format: "%+.2f")
                 }
+            } else {
+                Text("SDA GPIO25 · SCL GPIO26 · DATA_RDY GPIO14").font(Theme.monoSmall).foregroundStyle(Theme.muted)
             }
-            .padding()
         }
     }
 }
@@ -274,16 +115,17 @@ struct ServoView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Serwa ST3215").font(.title2.bold())
+                    if aura.servoIDs.isEmpty {
+                        Text("Brak wykrytych serw").font(Theme.body).foregroundStyle(Theme.muted)
+                    } else {
+                        Picker("Serwo", selection: $aura.selectedServo) {
+                            ForEach(aura.servoIDs, id: \.self) { Text("ID \($0)").tag($0) }
+                        }
+                        .frame(maxWidth: 220)
+                        .onChange(of: aura.selectedServo) { _, _ in aura.refreshServo() }
+                    }
                     Spacer()
                     Button("Skanuj 0…253") { aura.scanServos() }.disabled(aura.busy || !aura.isConnected)
-                }
-                if aura.servoIDs.isEmpty {
-                    Text("Nie znaleziono jeszcze serw. Podłącz zasilanie magistrali i uruchom skanowanie.").foregroundStyle(.secondary)
-                } else {
-                    Picker("Serwo", selection: $aura.selectedServo) {
-                        ForEach(aura.servoIDs, id: \.self) { Text("ID \($0)").tag($0) }
-                    }.onChange(of: aura.selectedServo) { _, _ in aura.refreshServo() }
                 }
                 GroupBox("Sterowanie") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -304,14 +146,11 @@ struct ServoView: View {
                                 aura.setOperatingMode()
                             }
                             .disabled(aura.busy || !aura.isConnected)
-                            Text("Zmiana trybu zatrzymuje napęd i wyłącza moment.")
-                                .foregroundStyle(.secondary)
                         }
                         HStack { Text("Przyspieszenie"); Slider(value: $aura.acceleration, in: 0...254); Text("\(Int(aura.acceleration))").monospacedDigit().frame(width: 45) }
                         if aura.operatingMode == .servo {
                             HStack {
                                 Button("Ustaw bieżącą pozycję jako środek") { aura.calibrateCenter() }
-                                Text("Tryb pozycyjny 0–360°").foregroundStyle(.secondary)
                             }
                             HStack { Text("Kąt"); Slider(value: $aura.angle, in: 0...360); Text("\(Int(aura.angle))°").monospacedDigit().frame(width: 50) }
                             HStack { Text("Prędkość ruchu"); Slider(value: $aura.speed, in: 0...3400); Text("\(Int(aura.speed))").monospacedDigit().frame(width: 55) }
@@ -323,8 +162,6 @@ struct ServoView: View {
                                 Slider(value: $aura.motorSpeed, in: -3400...3400)
                                 Text("\(Int(aura.motorSpeed))").monospacedDigit().frame(width: 65)
                             }
-                            Text("Wartość ujemna obraca w przeciwną stronę, 0 zatrzymuje.")
-                                .foregroundStyle(.secondary)
                             HStack {
                                 Button("Uruchom / ustaw prędkość") { aura.runMotor() }
                                     .buttonStyle(.borderedProminent)
@@ -343,7 +180,7 @@ struct ServoView: View {
                 }
                 GroupBox("Nadawanie adresu") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Podłącz tylko jedno serwo. Operacja odblokowuje EEPROM, zmienia ID, blokuje EEPROM i sprawdza nowy adres.").foregroundStyle(.secondary)
+                        Text("Tylko jedno serwo na magistrali").font(Theme.label).foregroundStyle(Theme.yellow)
                         HStack {
                             Stepper("Obecny ID: \(aura.currentID)", value: $aura.currentID, in: 0...253)
                             Stepper("Nowy ID: \(aura.newID)", value: $aura.newID, in: 0...253)
@@ -361,26 +198,26 @@ struct LEDsView: View {
     @EnvironmentObject var aura: AuraConnection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Pasek LED • GPIO32").font(.title2.bold())
-            HStack {
-                Text("Jasność")
-                Slider(value: $aura.ledBrightness, in: 0...100, step: 5) { editing in
-                    if !editing { aura.saveLEDBrightness() }
+        Page {
+            Panel("Jasność paska") {
+                HStack {
+                    Slider(value: $aura.ledBrightness, in: 0...100, step: 5) { editing in
+                        if !editing { aura.saveLEDBrightness() }
+                    }
+                    Text("\(Int(aura.ledBrightness)) %").font(Theme.mono).frame(width: 50, alignment: .trailing)
                 }
-                Text("\(Int(aura.ledBrightness)) %").monospacedDigit().frame(width: 50, alignment: .trailing)
+                .disabled(!aura.isConnected)
             }
-            .disabled(!aura.isConnected)
-            .frame(maxWidth: 420)
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
-                GridRow { Text("Dioda 1"); Text("stan: pomarańczowy rozbrojony, zielony uzbrojony, czerwony kalibracja, miga przy blokadzie") }
-                GridRow { Text("Dioda 2"); Text("tryb: 1 niebieski, 2 turkusowy, 3 fioletowy, 4 żółty, 5 różowy") }
-                GridRow { Text("Diody 3–8"); Text("bateria 10,0–12,6 V: zielony, pomarańczowy poniżej 11,0 V, czerwony przy 10,0 V") }
-            }.foregroundStyle(.secondary)
-            Text("Jasność dotyczy tylko paska robota i jest zapisywana w Aurze. Lightbar pada pokazuje ten sam stan co dioda 1.").foregroundStyle(.secondary)
-            Spacer()
+            .frame(maxWidth: 480)
+            Panel("Diody") {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                    GridRow { Text("1").foregroundStyle(Theme.muted); Text("stan: pomarańczowy rozbrojony · zielony uzbrojony · czerwony kalibracja · miga blokada") }
+                    GridRow { Text("2").foregroundStyle(Theme.muted); Text("tryb: 1 niebieski · 2 turkusowy · 3 fioletowy · 4 żółty · 5 różowy") }
+                    GridRow { Text("3–8").foregroundStyle(Theme.muted); Text("bateria 10,0–12,6 V · pomarańczowy < 11,0 V · czerwony ≤ 10,0 V") }
+                }
+                .font(Theme.body).foregroundStyle(Theme.text)
+            }
         }
-        .padding()
         .onAppear { if aura.isConnected { aura.readLEDBrightness() } }
     }
 }
@@ -638,17 +475,11 @@ struct ToFView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Czujniki odległości VL53L4CD").font(.title2.bold())
-                        Text("S2 działa jako VL53L4CD; S1 / GPIO14 jest zarezerwowane dla MPU6050 DATA_RDY.")
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("VL53L4CD · wykryte: \(aura.detectedToFSensorIndices.count)")
+                        .font(Theme.body).foregroundStyle(Theme.muted)
                     Spacer()
-                    Text("Wykryto: \(aura.detectedToFSensorIndices.count)")
-                        .font(.headline.monospacedDigit())
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(.quaternary, in: Capsule())
                     Button("Wykryj S2 ponownie") { aura.reinitializeToF() }
+                        .controlSize(.small)
                         .disabled(aura.busy || !aura.isConnected)
                 }
 
@@ -671,10 +502,7 @@ struct ToFView: View {
                 }
 
                 if aura.detectedToFSensorIndices.isEmpty {
-                    ContentUnavailableView(
-                        "Nie wykryto VL53L4CD",
-                        systemImage: "sensor.tag.radiowaves.forward",
-                        description: Text("Podłącz VL53L4CD do S2 i wybierz „Wykryj S2 ponownie”."))
+                    Text("Nie wykryto VL53L4CD na S2").font(Theme.body).foregroundStyle(Theme.muted)
                 } else {
                     ForEach(aura.detectedToFSensorIndices, id: \.self) { index in
                         ToFSensorCard(sensor: $aura.tofSensors[index],
@@ -770,9 +598,8 @@ struct DualSenseView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
-                    Circle().fill(statusColor).frame(width: 10, height: 10)
-                    Text("DualSense").font(.title2.bold())
-                    Text(aura.dualSense.isConnected && !aura.dualSense.hasInput ? "Brak aktualnych danych" : aura.dualSense.state.title).foregroundStyle(.secondary)
+                    StatusDot(color: statusColor, text: aura.dualSense.isConnected && !aura.dualSense.hasInput
+                              ? "Brak aktualnych danych" : aura.dualSense.state.title)
                     Spacer()
                     if aura.dualSense.state == .scanning || aura.dualSense.state == .connecting {
                         ProgressView().controlSize(.small)
@@ -863,65 +690,125 @@ struct DualSenseView: View {
     }
 }
 
-private enum AuraTab: String, CaseIterable, Identifiable {
-    case dashboard, imu, servos, robot, calibration, quadruped, ikLab, dualSense, sensors, leds, firmware
+private enum AuraSection: String, CaseIterable, Identifiable {
+    case overview, charts, route, robot3d, robot, calibration, ikLab, servos, imu, pad, sensors, leds, firmware
 
     var id: Self { self }
     var title: String {
         switch self {
-        case .dashboard: "Płytka"
-        case .imu: "IMU"
-        case .servos: "Serwa"
-        case .robot: "Robot"
-        case .calibration: "Calibration"
-        case .quadruped: "Quadruped"
+        case .overview: "Pulpit"
+        case .charts: "Wykresy"
+        case .route: "Trasa"
+        case .robot3d: "Robot 3D"
+        case .robot: "Konfiguracja"
+        case .calibration: "Kalibracja"
         case .ikLab: "Test IK"
-        case .dualSense: "DualSense"
+        case .servos: "Serwa"
+        case .imu: "IMU"
+        case .pad: "Pad"
         case .sensors: "Czujniki"
         case .leds: "LED"
         case .firmware: "Firmware"
         }
     }
-    var icon: String {
-        switch self {
-        case .dashboard: "gauge.with.dots.needle.50percent"
-        case .imu: "gyroscope"
-        case .servos: "move.3d"
-        case .robot: "point.3.connected.trianglepath.dotted"
-        case .calibration: "slider.horizontal.3"
-        case .quadruped: "figure.walk.motion"
-        case .ikLab: "point.3.connected.trianglepath.dotted"
-        case .dualSense: "gamecontroller"
-        case .sensors: "ruler"
-        case .leds: "lightbulb.led"
-        case .firmware: "arrow.down.circle"
-        }
-    }
+    static let groups: [(String, [AuraSection])] = [
+        ("Podgląd", [.overview, .charts, .route, .robot3d]),
+        ("Robot", [.robot, .calibration, .ikLab, .servos]),
+        ("Płytka", [.imu, .pad, .sensors, .leds, .firmware]),
+    ]
 }
 
 private final class AuraNavigationStore: ObservableObject {
-    @Published var selectedTab: AuraTab = .dashboard
+    @Published var section: AuraSection = .overview
 }
 
-private struct AuraTabButton: View {
-    let tab: AuraTab
-    let selected: Bool
-    let select: () -> Void
+private struct Sidebar: View {
+    @ObservedObject var navigation: AuraNavigationStore
 
     var body: some View {
-        Button(action: select) {
-            HStack(spacing: 6) {
-                Image(systemName: tab.icon)
-                Text(tab.title)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Aura").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+            ForEach(Array(AuraSection.groups.enumerated()), id: \.offset) { _, group in
+                Text(group.0).font(Theme.label).foregroundStyle(Theme.faint)
+                    .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4)
+                ForEach(group.1) { section in
+                    let index = AuraSection.allCases.firstIndex(of: section) ?? 0
+                    let selected = navigation.section == section
+                    Button { navigation.section = section } label: {
+                        Text(section.title)
+                            .font(.system(size: 12))
+                            .foregroundStyle(selected ? Theme.text : Theme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(selected ? Theme.accent.opacity(0.28) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 4))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .keyboardShortcut(index < 9 ? KeyEquivalent(Character("\(index + 1)")) : KeyEquivalent(" "),
+                                      modifiers: index < 9 ? .command : [.command, .option, .control, .shift])
+                }
             }
-            .font(.subheadline.weight(selected ? .semibold : .regular))
-            .foregroundStyle(selected ? .primary : .secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(selected ? Color.primary.opacity(0.14) : Color.clear,
-                        in: Capsule())
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .frame(width: 168)
+        .background(Theme.panel)
+    }
+}
+
+private struct TopBar: View {
+    @EnvironmentObject var aura: AuraConnection
+    let title: String
+
+    var body: some View {
+        let state = aura.robotState
+        let voltage = aura.power.servoBusVoltage
+        HStack(spacing: 16) {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+            Spacer(minLength: 8)
+            if aura.isConnected {
+                StatusDot(color: state.safetyFault.latched ? Theme.red : state.armed ? Theme.green : Theme.yellow,
+                          text: state.safetyFault.latched ? "Blokada" : state.armed ? "Uzbrojony" : "Rozbrojony")
+                Text(AuraPadMode.title(state.selectedGait)).font(Theme.label).foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+                Text(String(format: "%.2f V", voltage)).font(Theme.monoSmall)
+                    .foregroundStyle(voltage <= 10 ? Theme.red : voltage < 11 ? Theme.orange : Theme.text)
+            }
+            StatusDot(color: aura.isConnected ? Theme.green : Theme.orange,
+                      text: aura.isConnected ? "Wi-Fi" : "Szukam Aury")
+            if aura.busy { ProgressView().controlSize(.mini) }
+            Button("Połącz ponownie") { aura.reconnect() }.controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 38)
+        .background(Theme.panel)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+}
+
+private struct StatusBar: View {
+    @EnvironmentObject var aura: AuraConnection
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if !aura.message.isEmpty {
+                Text(aura.message).font(Theme.label).foregroundStyle(Theme.text).lineLimit(1)
+                    .truncationMode(.tail).help(aura.message)
+                Button("×") { aura.message = "" }.buttonStyle(.plain).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 8)
+            Text(aura.connectionText).font(Theme.label).foregroundStyle(Theme.faint).lineLimit(1)
+            if aura.isConnected {
+                Text(String(format: "%.0f s", Double(aura.power.uptimeMilliseconds) / 1000))
+                    .font(Theme.monoSmall).foregroundStyle(Theme.faint)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 24)
+        .background(Theme.panel)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
 }
 
@@ -932,16 +819,20 @@ struct ContentView: View {
     @StateObject private var navigation = AuraNavigationStore()
 
     @ViewBuilder
-    private var selectedContent: some View {
-        switch navigation.selectedTab {
-        case .dashboard: DashboardView()
-        case .imu: IMUView()
-        case .servos: ServoView()
+    private var content: some View {
+        // One live panel at a time: a TabView would keep every chart and
+        // 3D scene alive behind the visible one.
+        switch navigation.section {
+        case .overview: OverviewView()
+        case .charts: ChartsView()
+        case .route: RouteView()
+        case .robot3d: QuadrupedView(channel: aura.robotRenderChannel, aura: aura)
         case .robot: RobotControlView()
         case .calibration: CalibrationView()
-        case .quadruped: QuadrupedView(channel: aura.robotRenderChannel, aura: aura)
         case .ikLab: IKLabView(aura: aura)
-        case .dualSense: DualSenseView()
+        case .servos: ServoView()
+        case .imu: IMUView()
+        case .pad: DualSenseView()
         case .sensors: ToFView()
         case .leds: LEDsView()
         case .firmware: FirmwareView()
@@ -949,41 +840,25 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Aura").font(.title2.bold()).foregroundStyle(.black)
-                    .padding(.horizontal, 11).padding(.vertical, 5).background(.white, in: RoundedRectangle(cornerRadius: 8))
-                Circle().fill(aura.isConnected ? Color.green : Color.orange).frame(width: 9, height: 9)
-                Text(aura.connectionText)
-                if aura.busy { ProgressView().controlSize(.small) }
-                Spacer()
-                Button("Szukaj ponownie") { aura.reconnect() }
-            }.padding(12).background(.bar)
-            // TabView retains all of its child trees.  With live telemetry,
-            // that meant the chart, sensor cards and 3D scene stayed alive at
-            // once.  This bar constructs exactly one live panel.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(AuraTab.allCases) { tab in
-                        AuraTabButton(tab: tab, selected: tab == navigation.selectedTab) {
-                            navigation.selectedTab = tab
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-            }
-            .background(.bar.opacity(0.55))
-            selectedContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if !aura.message.isEmpty {
-                HStack { Text(aura.message); Spacer(); Button("×") { aura.message = "" }.buttonStyle(.plain) }
-                    .padding(10).background(.regularMaterial)
+        HStack(spacing: 0) {
+            Sidebar(navigation: navigation)
+            Rectangle().fill(Theme.line).frame(width: 1)
+            VStack(spacing: 0) {
+                TopBar(title: navigation.section.title)
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Theme.canvas)
+                StatusBar()
             }
         }
-        .frame(minWidth: 900, minHeight: 620)
+        .frame(minWidth: 900, minHeight: 600)
+        .background(Theme.canvas)
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
         .groupBoxStyle(AuraGroupBoxStyle())
         .environmentObject(aura)
+        .environmentObject(aura.history)
+        .environmentObject(aura.route)
         .environmentObject(robot)
         .environmentObject(calibration)
         .onChange(of: aura.robotAxisBackup) { _, records in
@@ -994,9 +869,12 @@ struct ContentView: View {
 
 @main
 struct MainBoardControlApp: App {
+    init() { NSApplication.shared.appearance = NSAppearance(named: .darkAqua) }
+
     var body: some Scene {
         WindowGroup("Aura") { ContentView() }
             .windowStyle(.titleBar)
+            .windowToolbarStyle(.unifiedCompact)
             .defaultSize(width: 1280, height: 820)
     }
 }

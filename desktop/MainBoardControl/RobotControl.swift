@@ -292,7 +292,7 @@ private struct RobotAxisCard: View {
                 .font(.caption).foregroundStyle(duplicateID ? .orange : .secondary)
         }
         .padding(12)
-        .frame(width: 225, alignment: .leading)
+        .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .onChange(of: axis) { _, _ in save() }
     }
@@ -305,19 +305,15 @@ struct RobotControlView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Robot").font(.title2.bold())
-                        Text("Serwo → oś → noga → ciało").foregroundStyle(.secondary)
-                    }
+                HStack(alignment: .center) {
+                    StatusDot(color: aura.robotState.armed ? Theme.green : Theme.yellow,
+                              text: aura.robotState.armed ? "Serwa uzbrojone" : "Serwa rozbrojone")
                     Spacer()
-                    Label(aura.robotState.armed ? "Serwa uzbrojone" : "Serwa rozbrojone",
-                          systemImage: aura.robotState.armed ? "bolt.fill" : "bolt.slash")
-                        .foregroundStyle(aura.robotState.armed ? .orange : .secondary)
                     Button("Pobierz z Aury") { aura.requestRobotConfiguration() }
                         .disabled(!aura.isConnected || aura.busy)
                     Button("Zapisz do Aury") { aura.configureRobot(robot.axes) }
                         .disabled(!aura.isConnected || aura.robotState.armed)
+                        .help("Kopia na Macu: \(robot.backupPath)")
                     Button(aura.robotState.armed ? "Rozbrój" : "Uzbrój 12 serw") {
                         aura.setRobotArmed(!aura.robotState.armed)
                     }
@@ -364,26 +360,16 @@ struct RobotControlView: View {
                         }
                     }
                     .disabled(!aura.isConnected || aura.servoIDs.count < 12 || aura.robotState.armed)
-                    Text("Wykryte: \(aura.servoIDs.count) / 12")
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Text("wykryte \(aura.servoIDs.count) / 12 · przypisane \(robot.assignedCount) / 12")
+                        .font(Theme.monoSmall).foregroundStyle(Theme.muted)
                 }
 
-                HStack(spacing: 12) {
-                    Metric(title: "Przypisane osie", value: "\(robot.assignedCount) / 12")
-                    Metric(title: "Backend", value: "Aura / ESP32")
-                    Metric(title: "Sterownik", value: "50 Hz")
-                    Metric(title: "Pakiet", value: "SYNC_WRITE")
-                }
 
                 if aura.robotState.trackingLimited {
                     Label(String(format: "Aura płynnie redukuje tempo kroku do %.0f%%, bo odczyt serw jest za celem.", aura.robotState.phaseRate * 100), systemImage: "speedometer")
                         .font(.callout).foregroundStyle(.orange)
                 }
 
-                Text("Najpierw zeskanuj magistralę i wstaw wykryte ID. To nie włącza momentu. Kierunek, zero i limity są własnością osi, więc lustrzane nogi nie wymagają wyjątków w kinematyce.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text("Kopia konfiguracji: \(robot.backupPath)")
-                    .font(.caption.monospaced()).foregroundStyle(.secondary)
 
                 ForEach(RobotLegID.physicalOrder) { leg in
                     GroupBox(leg.title) {
@@ -393,13 +379,6 @@ struct RobotControlView: View {
                             }
                         }
                     }
-                }
-
-                GroupBox("Stan wykonawczy") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Aura zapisuje przypisania osi w swojej pamięci i liczy gait oraz IK co 20 ms. Komputer odbiera tylko cele i ostatnie odczyty zwrotne serw.")
-                        Text("Wybranie „Uzbrój 12 serw” jest możliwe dopiero po przypisaniu wszystkich osi. Bez serw można bezpiecznie zapisać konfigurację — firmware pozostaje rozbrojony.")
-                    }.font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding()

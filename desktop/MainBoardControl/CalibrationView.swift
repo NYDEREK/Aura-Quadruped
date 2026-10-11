@@ -398,16 +398,10 @@ struct CalibrationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Calibration").font(.title2.bold())
-                        Text("Jedna noga naraz • ustawienia zapisują się bezpośrednio w Aurze")
-                            .foregroundStyle(.secondary)
-                    }
+                HStack(alignment: .center) {
+                    StatusDot(color: aura.robotState.armed ? Theme.orange : Theme.green,
+                              text: aura.robotState.armed ? "Najpierw rozbrój serwa" : "Bezpieczna kalibracja · jedna noga naraz")
                     Spacer()
-                    Label(aura.robotState.armed ? "Najpierw rozbrój serwa" : "Tryb bezpiecznej kalibracji",
-                          systemImage: aura.robotState.armed ? "bolt.slash.fill" : "checkmark.shield.fill")
-                        .foregroundStyle(aura.robotState.armed ? .orange : .green)
                 }
 
                 HStack(spacing: 6) {
@@ -418,13 +412,15 @@ struct CalibrationView: View {
                             calibration.startLeg(index)
                         } label: {
                             let done = calibration.finishedLegs.contains(leg)
-                            Label(leg.displayCode, systemImage: done ? "checkmark.circle.fill" : "circle")
-                                .font(.caption.weight(index == calibration.legIndex ? .semibold : .regular))
-                                .foregroundStyle(index == calibration.legIndex ? .primary : .secondary)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 7)
-                                .background(index == calibration.legIndex ? Color.primary.opacity(0.14) : Color.clear,
-                                            in: Capsule())
+                            let selected = index == calibration.legIndex
+                            VStack(spacing: 5) {
+                                Text(leg.displayCode + (done ? " ✓" : ""))
+                                    .font(.system(size: 12, weight: selected ? .medium : .regular))
+                                    .foregroundStyle(selected ? Theme.text : done ? Theme.green : Theme.muted)
+                                Rectangle().fill(selected ? Theme.accent : .clear).frame(height: 2)
+                            }
+                            .padding(.horizontal, 8)
+                            .fixedSize()
                         }
                         .buttonStyle(.plain)
                     }
@@ -457,8 +453,8 @@ struct CalibrationView: View {
                                                       highlightedAxis: calibration.step == .direction ? calibration.axisIndex : nil,
                                                       time: timeline.date.timeIntervalSinceReferenceDate,
                                                       channel: aura.robotRenderChannel)
-                                .frame(minWidth: 490, minHeight: 420)
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .frame(minWidth: 380, minHeight: 420)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
                                 .overlay(alignment: .bottomLeading) {
                                     Text(liveReadPreview
                                          ? "Podgląd pozycji TTL całego robota • 12 odczytów, moment wyłączony"
@@ -485,9 +481,9 @@ struct CalibrationView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 13) {
-                            Text(legTitle).font(.title3.bold())
-                            Text("Sterujesz zapisanymi osiami: \(legAxes.map { String($0.servoID) }.joined(separator: ", "))")
-                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            Text(legTitle).font(Theme.heading)
+                            Text("ID " + legAxes.map { String($0.servoID) }.joined(separator: ", "))
+                                .font(Theme.monoSmall).foregroundStyle(Theme.muted)
                             Text(calibration.step.instruction).foregroundStyle(.secondary)
                             Picker("Podgląd modelu", selection: $calibration.previewMode) {
                                 ForEach(CalibrationPreviewMode.allCases) { mode in
@@ -495,15 +491,13 @@ struct CalibrationView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
-                            Text("Podgląd Trot jest wyłącznie wizualny. Pełny test z padem poniżej napędza tylko tę nogę i pokazuje jej odczyt TTL na tle kompletnej wirtualnej postawy robota.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            .labelsHidden()
                             Button(liveReadPreview ? "Wyłącz podgląd pozycji TTL" : "Włącz podgląd pozycji TTL całego robota") {
                                 aura.setCalibrationLivePreview(enabled: !liveReadPreview)
                             }
                             .buttonStyle(.bordered)
                             .disabled(aura.busy || aura.robotState.armed)
-                            Text("Odczytuje stale pozycje wszystkich 12 serw i pokazuje je na tym samym modelu co Quadruped. Nie uzbraja serw i nie wysyła komend ruchu.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            .help("Odczytuje pozycje 12 serw bez uzbrajania i bez komend ruchu.")
                             Divider()
                             Button(aura.calibrationArmedLeg == currentLegIndex
                                    ? "Rozbrój tę nogę" : "Uzbrój tylko tę nogę") {
@@ -512,12 +506,11 @@ struct CalibrationView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(aura.busy)
-                            Text("Działa wyłącznie na ID \(legAxes.map { String($0.servoID) }.joined(separator: ", ")). Pozostałe dziewięć serw pozostaje rozbrojone.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            .help("Tylko ID \(legAxes.map { String($0.servoID) }.joined(separator: ", ")); pozostałe serwa zostają rozbrojone.")
                             Divider()
                             stepControls
                         }
-                        .frame(minWidth: 275, maxWidth: 360, alignment: .leading)
+                        .frame(width: 290, alignment: .leading)
                     }
 
                     GroupBox("Zapisane parametry \(legTitle)") {

@@ -1476,7 +1476,7 @@ private final class QuadrupedScene: NSObject {
     private let rightColor = NSColor(red: 1, green: 0.46, blue: 0.17, alpha: 1)
 
     override init() {
-        super.init(); scene.background.contents = NSColor(calibratedWhite: 0.075, alpha: 1)
+        super.init(); scene.background.contents = Theme.canvasNS
         scene.rootNode.addChildNode(robot)
         scene.rootNode.addChildNode(presentationOrigin)
         scene.rootNode.addChildNode(cameraRig)
@@ -1494,7 +1494,7 @@ private final class QuadrupedScene: NSObject {
         let result = SCNMaterial(); result.diffuse.contents = color; result.metalness.contents = metal; result.roughness.contents = 0.32; return result
     }
     private func configureWorld() {
-        let floor = SCNFloor(); floor.reflectivity = 0.03; floor.firstMaterial = material(NSColor(calibratedWhite: 0.16, alpha: 1), metal: 0.15)
+        let floor = SCNFloor(); floor.reflectivity = 0.02; floor.firstMaterial = material(NSColor(rgb: 0x232427), metal: 0.1)
         let floorNode = SCNNode(geometry: floor)
         self.floorNode = floorNode
         scene.rootNode.addChildNode(floorNode)
@@ -1789,11 +1789,12 @@ private final class QuadrupedScene: NSObject {
             camera.position = SCNVector3(400, 285, 440)
             camera.eulerAngles = SCNVector3(0, 0, 0)
         }
-        if let lastSnapshot {
-            update(model, snapshot: lastSnapshot,
-                   lockPresentationToOrigin: lockPresentationToOrigin,
-                   showWorld: showWorld, showFootTrails: showFootTrails)
-        }
+        // Until Aura sends a frame, draw the neutral standing pose of the
+        // local model instead of an empty scene.
+        let snapshot = lastSnapshot ?? model.pose(at: ProcessInfo.processInfo.systemUptime, pad: AuraDualSense())
+        update(model, snapshot: snapshot,
+               lockPresentationToOrigin: lockPresentationToOrigin,
+               showWorld: showWorld, showFootTrails: showFootTrails)
     }
     private func setCameraTarget(lockPresentationToOrigin: Bool) {
         guard cameraTracksPresentationOrigin != lockPresentationToOrigin else { return }
@@ -1893,13 +1894,13 @@ private struct QuadrupedSceneView: NSViewRepresentable {
     func makeCoordinator() -> QuadrupedScene { QuadrupedScene() }
     func makeNSView(context: Context) -> SCNView {
         context.coordinator.bind(channel, model: model, lockPresentationToOrigin: true,
-                                 showWorld: false, showFootTrails: true)
-        let view = SCNView(); view.scene = context.coordinator.scene; view.pointOfView = context.coordinator.camera; view.backgroundColor = .black; configureSimulationCamera(view); view.autoenablesDefaultLighting = false; view.antialiasingMode = .none; view.preferredFramesPerSecond = 60; view.rendersContinuously = false
+                                 showWorld: true, showFootTrails: true)
+        let view = SCNView(); view.scene = context.coordinator.scene; view.pointOfView = context.coordinator.camera; view.backgroundColor = Theme.canvasNS; configureSimulationCamera(view); view.autoenablesDefaultLighting = false; view.antialiasingMode = .multisampling4X; view.preferredFramesPerSecond = 60; view.rendersContinuously = false
         return view
     }
     func updateNSView(_ view: SCNView, context: Context) {
         context.coordinator.bind(channel, model: model, lockPresentationToOrigin: true,
-                                 showWorld: false, showFootTrails: true)
+                                 showWorld: true, showFootTrails: true)
         context.coordinator.refreshGeometry(using: model)
     }
 }
@@ -2063,13 +2064,9 @@ struct IKLabView: View {
                             .font(.caption.monospacedDigit())
                             .frame(width: 55, alignment: .trailing)
                     }
-                    Text(aura.robotState.armed
-                         ? "Rozbrój Aurę przed zmianą wspólnego profilu."
-                         : aura.isConnected
-                            ? "Po puszczeniu suwaka wartość zapisuje się w Aurze; nie wysyła celu serw."
-                            : "Zmiana jest widoczna od razu w Test IK i Quadruped. Podłącz Aurę, aby ją zapisać na płytce.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if aura.robotState.armed {
+                        Text("Rozbrój Aurę przed zmianą profilu").font(Theme.label).foregroundStyle(Theme.yellow)
+                    }
                 }
                 .frame(width: 280)
             }
@@ -2083,33 +2080,18 @@ struct IKLabView: View {
             let solution = model.ikLabProbe(leg: store.probeLeg, target: target)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Test IK").font(.title2.bold())
-                            Text("Lokalna scena 3D i inverse kinematics — wspólny profil trajektorii z Quadruped")
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Label("TYLKO MODEL", systemImage: "desktopcomputer")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.mint)
-                    }
+                    Text("Model lokalny · nie wysyła komend do Aury").font(Theme.label).foregroundStyle(Theme.muted)
 
                     HStack(alignment: .top, spacing: 14) {
                         IKLabScene(model: model, gait: store.gait, forward: store.forward,
                                    lateral: store.lateral, turn: store.turn, playing: store.playing,
                                    time: timeline.date.timeIntervalSinceReferenceDate)
-                            .frame(minWidth: 620, minHeight: 520)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(alignment: .bottom) {
-                                HStack {
-                                    Text("Przeciągnij: obrót • przewiń: zoom • trajektorie stóp")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button("Wycentruj widok") { model.resetCamera() }
-                                        .controlSize(.small)
-                                }
-                                .padding(12)
+                            .frame(minWidth: 380, minHeight: 520)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(alignment: .bottomTrailing) {
+                                Button("Wycentruj") { model.resetCamera() }
+                                    .controlSize(.small)
+                                    .padding(10)
                             }
 
                         VStack(alignment: .leading, spacing: 12) {
@@ -2135,8 +2117,6 @@ struct IKLabView: View {
                                         axisControl("Przód", value: $store.forward, range: -1...1)
                                         axisControl("Bok", value: $store.lateral, range: -1...1)
                                         axisControl("Skręt", value: $store.turn, range: -1...1)
-                                        Text("Te osie zasilają wyłącznie wirtualny pad tego widoku.")
-                                            .font(.caption).foregroundStyle(.secondary)
                                     }
                                 }
                                 .frame(width: 280)
@@ -2194,14 +2174,9 @@ struct IKLabView: View {
                                     .font(.caption)
                                 }
                             }
-                            Text("Próbnik liczy dokładnie lokalne równanie 3-DOF używane przez scenę. Nie ma dostępu do Wi‑Fi, Bluetootha, UART ani sterowników serw.")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 3)
                     }
-
-                    Text("Kolorowe linie pokazują zapamiętaną trajektorię każdej stopy w bieżącym cyklu. Ten widok służy do dopracowania wymiarów, trajektorii stopy i kierunków przed testem sprzętowym. Statyczna stabilność na fizycznym robocie nadal wymaga bezpiecznych krańców, poprawnej kalibracji oraz później sprzężenia z IMU.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding()
             }
@@ -2338,210 +2313,269 @@ private struct DimensionField: View {
     var body: some View { HStack(spacing: 8) { Text(title).font(.caption).foregroundStyle(.secondary); Spacer(); TextField(title, value: $value, format: .number.precision(.fractionLength(0))).multilineTextAlignment(.trailing).frame(width: 58); Text("mm").font(.caption.monospaced()).foregroundStyle(.secondary) } }
 }
 
+enum Robot3DTab: String, Hashable { case state, gait, setup, geometry }
+
 struct QuadrupedView: View {
     let channel: AuraRobotRenderChannel
     @ObservedObject var aura: AuraConnection
     @StateObject private var model = QuadrupedModel()
     @StateObject private var hud = QuadrupedHUDStore()
+    @AppStorage("aura.robot3d.tab") private var tab: Robot3DTab = .state
+
     var body: some View {
         let state = hud.frame.state
-        let controller = hud.frame.controller
-        let legTelemetry = hud.frame.legs
-        let contacts = hud.frame.contacts
-        GeometryReader { available in
-            ScrollView([.vertical, .horizontal]) { VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) { VStack(alignment: .leading, spacing: 3) { Text("Quadruped").font(.title2.bold()); Text("Scena 3D • cele osi z Aury • 12 serw TTL").foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 2) { Label(state.tickCount > 0 ? "Aura: planner 50 Hz" : "Oczekiwanie na Aurę", systemImage: "cpu").foregroundStyle(state.tickCount > 0 ? .green : .secondary); Text(state.calibrationLeg != nil ? "KALIBRACJA: 1 NOGA FIZYCZNA" : state.jumping ? "SKOK" : state.spinMode ? "L1: OBRÓT W MIEJSCU" : "TRYB \(AuraPadMode.title(state.selectedGait))").font(.caption.monospaced()).foregroundStyle(state.jumping ? .yellow : state.spinMode ? .mint : .secondary) } }
-                HSplitView {
-                    QuadrupedSceneView(model: model, channel: channel)
-                        .frame(minWidth: 680, idealWidth: 860, maxWidth: .infinity, minHeight: 560)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(alignment: .bottom) {
-                            HStack {
-                                Text("Przeciągnij: obrót • przewiń: zoom • trajektorie stóp i łuki skrętu")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Wycentruj widok") { model.resetCamera() }
-                                    .controlSize(.small)
-                            }
-                            .padding(12)
+        HStack(spacing: 0) {
+            QuadrupedSceneView(model: model, channel: channel)
+                .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topLeading) { Robot3DOverlay(state: state) }
+                .overlay(alignment: .bottomTrailing) {
+                    Button("Wycentruj") { model.resetCamera() }.controlSize(.small).padding(10)
+                }
+            Rectangle().fill(Theme.line).frame(width: 1)
+            VStack(spacing: 0) {
+                HStack {
+                    TextTabs(tabs: [(.state, "Stan"), (.gait, "Chód"), (.setup, "Ustawienia"), (.geometry, "Geometria")],
+                             selection: $tab)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6).padding(.top, 8)
+                Rectangle().fill(Theme.line).frame(height: 1)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        switch tab {
+                        case .state: Robot3DStateTab(frame: hud.frame)
+                        case .gait: Robot3DGaitTab(model: model, aura: aura)
+                        case .setup: Robot3DSetupTab(model: model, aura: aura)
+                        case .geometry: Robot3DGeometryTab(model: model, legs: hud.frame.legs)
                         }
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            if let cadence = state.effectiveFrequencyHz {
-                                Text(String(format: "Faktyczny cykl: %.2f Hz • wspólny dla korpusu i stóp", cadence))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            if state.constrainedLegMask != 0 {
-                                Text("Ograniczenie trajektorii: sprawdź zakresy nóg, wysokość i długość kroku.")
-                                    .font(.caption).foregroundStyle(.orange)
-                            }
-                            GroupBox("Sterowanie") { VStack(alignment: .leading, spacing: 8) { Text("D-pad → / ←  następny / poprzedni tryb (1–5)"); Text("D-pad ↑ / ↓  wysokość tułowia ±30 mm do rozbrojenia"); Divider(); Text("1 balans • 2 poza tułowia • 3 chód • 4 trucht (test) • 5 stanie"); Text("Tryb 2: lewy drążek przechyla tułów na boki i przód/tył"); Text("Tryb 3 i 4: lewy drążek ruch przód/bok, prawy X skręt"); Text("L1  obrót w miejscu (tryb 3); prawy X steruje obrotem"); Text("×  skok") }.font(.caption) }
-                        GroupBox("Wysokość stania") { VStack(alignment: .leading, spacing: 8) { HStack(spacing: 8) { Slider(value: $model.bodyHeight, in: 120...250, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotBodyHeight(Int(model.bodyHeight.rounded())) } }).disabled(!aura.isConnected || aura.robotState.armed); Text("\(Int(model.bodyHeight.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 62, alignment: .trailing) }; Text(aura.robotState.armed ? "Zmień po rozbrojeniu robota." : "Zapisywane w Aurze; zmiana nie wysyła ruchu.").font(.caption).foregroundStyle(.secondary) }
-                        }
-                        GroupBox("Rozstaw końców stóp") { VStack(alignment: .leading, spacing: 8) {
-                            let spread = Binding<Double>(get: { model.finalFootSpreadMm }, set: { model.finalFootSpreadMm = $0 })
-                            HStack(spacing: 8) {
-                                Slider(value: spread, in: 170...430, step: 1, onEditingChanged: { editing in
-                                    if !editing { aura.setRobotLateralStance(Int(model.lateralStance.rounded())) }
-                                }).disabled(!aura.isConnected || aura.robotState.armed)
-                                Text("\(Int(model.finalFootSpreadMm.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 62, alignment: .trailing)
-                            }
-                            Text("Od końca lewej do końca prawej stopy w pozycji stania. Zapisywane tylko po rozbrojeniu; nie wysyła ruchu.").font(.caption).foregroundStyle(.secondary)
-                        } }
-                        GroupBox("Profil chodu · Aura") {
-                            let profile = aura.gaitProfile(model.configuredGait)
-                            let editable = aura.isConnected && !aura.robotState.armed
-                            let stride = Binding<Double>(
-                                get: { Double(aura.gaitProfile(model.configuredGait).strideMm) },
-                                set: { value in var changed = aura.gaitProfile(model.configuredGait); changed.strideMm = Int(value.rounded()); aura.replaceGaitProfileLocally(changed) })
-                            let lift = Binding<Double>(
-                                get: { Double(aura.gaitProfile(model.configuredGait).stepHeightMm) },
-                                set: { value in var changed = aura.gaitProfile(model.configuredGait); changed.stepHeightMm = Int(value.rounded()); aura.replaceGaitProfileLocally(changed) })
-                            let frequency = Binding<Double>(
-                                get: { aura.gaitProfile(model.configuredGait).frequencyHz },
-                                set: { value in var changed = aura.gaitProfile(model.configuredGait); changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) })
-                            let minimumDuty = (model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5) ? 76.0 : 45.0
-                            let maximumDuty = (model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5) ? 90.0 : 85.0
-                            let maximumFrequency = (model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5) ? 1.20 : 3.00
-                            let duty = Binding<Double>(
-                                get: { Double(aura.gaitProfile(model.configuredGait).dutyPercent) },
-                                set: { value in var changed = aura.gaitProfile(model.configuredGait); changed.dutyPercent = Int(value.rounded()); aura.replaceGaitProfileLocally(changed) })
-                            VStack(alignment: .leading, spacing: 8) {
-                                Picker("Chód", selection: $model.configuredGait) {
-                                    ForEach(AuraGaitProfile.defaults) { profile in
-                                        Text(profile.title).tag(profile.gait)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                HStack(spacing: 8) {
-                                    Text("Długość").font(.caption)
-                                    Slider(value: stride, in: 15...300, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotGaitProfile(aura.gaitProfile(model.configuredGait)) } }).disabled(!editable)
-                                    Text("\(profile.strideMm) mm").font(.caption.monospacedDigit()).frame(width: 55, alignment: .trailing)
-                                }
-                                HStack(spacing: 8) {
-                                    Text("Wysokość kroku").font(.caption)
-                                    Slider(value: lift, in: 5...100, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotGaitProfile(aura.gaitProfile(model.configuredGait)) } }).disabled(!editable)
-                                    Text("\(profile.stepHeightMm) mm").font(.caption.monospacedDigit()).frame(width: 55, alignment: .trailing)
-                                }
-                                HStack(spacing: 8) {
-                                    Text("Częstotliwość").font(.caption)
-                                    Slider(value: frequency, in: 0.15...maximumFrequency, step: 0.05, onEditingChanged: { editing in if !editing { aura.setRobotGaitProfile(aura.gaitProfile(model.configuredGait)) } }).disabled(!editable)
-                                    Text(String(format: "%.2f Hz", profile.frequencyHz)).font(.caption.monospacedDigit()).frame(width: 55, alignment: .trailing)
-                                }
-                                HStack(spacing: 8) {
-                                    Text("Kontakt").font(.caption)
-                                    Slider(value: duty, in: minimumDuty...maximumDuty, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotGaitProfile(aura.gaitProfile(model.configuredGait)) } }).disabled(!editable)
-                                    Text("\(profile.dutyPercent)%").font(.caption.monospacedDigit()).frame(width: 55, alignment: .trailing)
-                                }
-                                Text("Długość kroku do 300 mm, podniesienie do 100 mm. Trot i Run do 3 Hz, Krok 1× i Climb do 1,2 Hz. FootSwingTrajectory MIT ma szczyt pionowego łuku dokładnie w połowie przenoszenia. Zmiana jest zapisywana tylko po rozbrojeniu.").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        GroupBox("Chodzenie na 3 łapach") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle("Jedna noga stale w powietrzu", isOn: Binding(
-                                    get: { aura.robotState.tripodWalkEnabled },
-                                    set: { aura.setTripodWalking($0, excludedLeg: aura.robotState.tripodExcludedLeg) }))
-                                Picker("Uniesiona noga", selection: Binding(
-                                    get: { aura.robotState.tripodExcludedLeg },
-                                    set: { aura.setTripodWalking(aura.robotState.tripodWalkEnabled, excludedLeg: $0) })) {
-                                    ForEach(QuadLeg.allCases) { Text($0.title).tag($0.wireIndex) }
-                                }
-                                Text("Eksperymentalny: wybrana noga jest podniesiona, trzy pozostałe kroczą. Wybór tylko po rozbrojeniu; uzbrojenie nadal przyciskiem Create. R1 wybiera ten tryb jako 5 — pięć białych kropek na padzie; kolejne R1 wraca do Stania.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.disabled(!aura.isConnected || aura.robotState.armed || !aura.robotState.balanceExtensionAvailable)
-                        }
-                        GroupBox("Korekcja stóp") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(state.swingBalanceActive ? "Podparcie + IMU: korekcja aktywna" : "Korekcja oczekuje na chód i świeży odczyt podparcia")
-                                if state.constrainedLegMask != 0 {
-                                    Text("Zakres ogranicza: " + QuadLeg.allCases.filter {
-                                        state.constrainedLegMask & (1 << $0.wireIndex) != 0
-                                    }.map(\.rawValue).joined(separator: ", "))
-                                        .foregroundStyle(.orange)
-                                }
-                            }.font(.caption)
-                        }
-                        GroupBox("Model planowania") {
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text("Wspólna faza stóp i korpusu • obliczenia na ESP32")
-                                    .font(.caption.weight(.semibold))
-                                Text("Stopa: trajektoria Béziera MIT. Korpus: podparcie VPSP i okresowa trajektoria LIPM. Podniesione stopy są przeliczane względem pozy zmierzonej przez IMU i enkodery nóg podporowych.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text("To adaptacja do serw pozycyjnych, nie siłowe MPC. Test IK pokazuje plan; stabilność robota wymaga próby fizycznej.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        GroupBox("Środek masy · krok 1×") { VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) { Text("Przód / tył").font(.caption); Slider(value: $model.staticComForward, in: -120...120, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotStaticBalance(comForward: Int(model.staticComForward.rounded()), comLeft: Int(model.staticComLeft.rounded()), supportMargin: Int(model.staticSupportMargin.rounded())) } }).disabled(!aura.isConnected || aura.robotState.armed); Text("\(Int(model.staticComForward.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 52, alignment: .trailing) }
-                            HStack(spacing: 8) { Text("Lewo / prawo").font(.caption); Slider(value: $model.staticComLeft, in: -120...120, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotStaticBalance(comForward: Int(model.staticComForward.rounded()), comLeft: Int(model.staticComLeft.rounded()), supportMargin: Int(model.staticSupportMargin.rounded())) } }).disabled(!aura.isConnected || aura.robotState.armed); Text("\(Int(model.staticComLeft.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 52, alignment: .trailing) }
-                            HStack(spacing: 8) { Text("Margines podparcia").font(.caption); Slider(value: $model.staticSupportMargin, in: 5...45, step: 1, onEditingChanged: { editing in if !editing { aura.setRobotStaticBalance(comForward: Int(model.staticComForward.rounded()), comLeft: Int(model.staticComLeft.rounded()), supportMargin: Int(model.staticSupportMargin.rounded())) } }).disabled(!aura.isConnected || aura.robotState.armed); Text("\(Int(model.staticSupportMargin.rounded())) mm").font(.caption.monospacedDigit()).frame(width: 52, alignment: .trailing) }
-                            Button("Wycentruj środek masy") {
-                                model.staticComForward = 0; model.staticComLeft = 0
-                                aura.setRobotStaticBalance(comForward: 0, comLeft: 0, supportMargin: Int(model.staticSupportMargin.rounded()))
-                            }.disabled(!aura.isConnected || aura.robotState.armed)
-                            Text("+ przód / lewo • − tył / prawo. Ustaw przesunięcie baterii względem środka ramy. Zapis nie porusza serwami.").font(.caption).foregroundStyle(.secondary)
-                        } }
-                        GroupBox("Grawitacja i podparcie") { VStack(alignment: .leading, spacing: 7) {
-                            Text(model.gravityStatusText).font(.caption.weight(.semibold))
-                            Text("Pomarańczowa kula: środek masy. Znacznik na podłożu: jego rzut. Bez IMU widok nie symuluje swobodnego przechyłu ani upadku — pokazuje wyłącznie margines podparcia.").font(.caption).foregroundStyle(.secondary)
-                        } }
-                        GroupBox("Kontakt stóp · IMU + serwa") {
-                            VStack(alignment: .leading, spacing: 7) {
-                                if contacts.feedbackAvailable {
-                                    ForEach(QuadLeg.allCases) { leg in
-                                        let index = leg.wireIndex
-                                        HStack(spacing: 6) {
-                                            Circle()
-                                                .fill(contacts.isEarlyTouchdown(index) ? .orange :
-                                                      contacts.isDetected(index) ? .green : .secondary)
-                                                .frame(width: 8, height: 8)
-                                            Text(leg.rawValue).font(.caption.monospaced().weight(.semibold))
-                                            Text(contacts.isDetected(index) ? "kontakt" : "brak kontaktu")
-                                                .font(.caption)
-                                            Spacer()
-                                            Text("\(contacts.confidence[index])%")
-                                                .font(.caption.monospacedDigit())
-                                        }
-                                    }
-                                    Text("Zielony: kontakt wykryty. Pomarańczowy: wczesne dotknięcie w fazie kroku.")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                } else {
-                                    Text("Czekam na pełny odczyt Hip i Knee z każdej nogi.")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Text(contacts.feedbackAvailable
-                                     ? "Odczyt kontaktu jest diagnostyczny. Nie zmienia fazy kroku, pozycji stopy ani ruchu korpusu."
-                                     : "Brak pełnego odczytu kontaktu; trajektoria pozostaje w całości planowana czasowo.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        GroupBox("Komenda z pada") { VStack(alignment: .leading, spacing: 7) { Text(String(format: "Przód    %+.2f", state.forward)); Text(String(format: "Bok      %+.2f", state.lateral)); Text(String(format: "Skręt    %+.2f", state.turn)); Text("Wysokość \(state.bodyHeight) mm"); Divider(); Text(String(format: "Pozycja  %.0f / %.0f mm", state.odometryX, state.odometryZ)); Text(String(format: "Kierunek %.0f°", state.odometryYaw * 180 / .pi)) }.font(.caption.monospaced()) }
-                            GroupBox("Stan") { VStack(alignment: .leading, spacing: 6) { Text(controller.battery.map { "Bateria pada: \($0)%" } ?? "Bateria pada: —"); Text("Raportów: \(controller.sampleCount)"); Text("Scena: 50 Hz • panel: 10 Hz") }.font(.caption.monospaced()) }
-                        }
-                        .padding(.trailing, 4)
                     }
-                    .frame(minWidth: 320, idealWidth: 340, maxWidth: 380, minHeight: 560, maxHeight: 620, alignment: .topLeading)
+                    .padding(10)
                 }
-                .frame(minWidth: 1050, maxWidth: .infinity, minHeight: 560, maxHeight: 620, alignment: .leading)
-                HStack(alignment: .top, spacing: 14) {
-                    GroupBox("Rama") { VStack(spacing: 8) { DimensionField(title: "Długość", value: $model.frameLength); DimensionField(title: "Szerokość", value: $model.frameWidth); DimensionField(title: "Odsunięcie narożnika", value: $model.cornerInset) }.frame(minWidth: 220) }
-                    GroupBox("Noga") { VStack(spacing: 8) { DimensionField(title: "Yaw → hip", value: $model.yawLink); DimensionField(title: "Hip → knee", value: $model.upperLeg); DimensionField(title: "Knee → stopa", value: $model.lowerLeg) }.frame(minWidth: 245) }
-                    GroupBox("12 zadanych kątów") { Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 7) { GridRow { Text("Noga"); Text("Ab/ad"); Text("Hip"); Text("Knee") }.foregroundStyle(.secondary); ForEach(QuadLeg.allCases) { leg in let index = leg.wireIndex; let feedback = legTelemetry.indices.contains(index) ? legTelemetry[index] : AuraRobotLegTelemetry(id: index); let angles = feedback.present.allSatisfy { $0 } ? feedback.measuredDegrees : feedback.targetDegrees; GridRow { Text(leg.rawValue).bold(); Text(String(format: "%+.0f°", angles[0])).monospacedDigit(); Text(String(format: "%+.0f°", angles[1])).monospacedDigit(); Text(String(format: "%+.0f°", angles[2])).monospacedDigit() } } }.font(.caption) }
-                }
-                .frame(minWidth: 1050, maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minWidth: max(1050, available.size.width - 24), alignment: .leading)
-            .padding()
+            .frame(width: 300)
+            .background(Theme.canvas)
+        }
+        .onAppear { hud.bind(channel) }
+        .onAppear { model.setLocomotionProfiles(aura.gaitProfiles) }
+        .onChange(of: aura.gaitProfiles) { _, profiles in
+            model.setLocomotionProfiles(profiles)
+        }
+        .onChange(of: aura.robotState.bodyHeight) { _, height in
+            guard !aura.robotState.armed, (120...250).contains(height) else { return }
+            model.bodyHeight = Double(height)
+        }
+    }
+}
+
+private struct Robot3DOverlay: View {
+    let state: AuraRobotState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(state.calibrationLeg != nil ? "KALIBRACJA" : state.jumping ? "SKOK"
+                 : state.spinMode ? "OBRÓT" : AuraPadMode.title(state.selectedGait))
+                .font(Theme.monoSmall).foregroundStyle(Theme.text)
+            Text(String(format: "faza %.2f · %d mm", state.phase, state.bodyHeight)
+                 + (state.effectiveFrequencyHz.map { String(format: " · %.2f Hz", $0) } ?? ""))
+                .font(Theme.monoSmall).foregroundStyle(Theme.muted)
+            if state.constrainedLegMask != 0 {
+                Text("zakres: " + QuadLeg.allCases.filter { state.constrainedLegMask & (1 << $0.wireIndex) != 0 }
+                        .map(\.rawValue).joined(separator: " "))
+                    .font(Theme.monoSmall).foregroundStyle(Theme.orange)
             }
         }
-            .onAppear { hud.bind(channel) }
-            .onAppear { model.setLocomotionProfiles(aura.gaitProfiles) }
-            .onChange(of: aura.gaitProfiles) { _, profiles in
-                model.setLocomotionProfiles(profiles)
+        .padding(8)
+        .background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+        .padding(10)
+    }
+}
+
+private struct Robot3DStateTab: View {
+    let frame: AuraRobotFrame
+
+    var body: some View {
+        let state = frame.state
+        let contacts = frame.contacts
+        Panel("Komenda") {
+            ValueRow(label: "Przód", value: String(format: "%+.2f", state.forward))
+            ValueRow(label: "Bok", value: String(format: "%+.2f", state.lateral))
+            ValueRow(label: "Skręt", value: String(format: "%+.2f", state.turn))
+            ValueRow(label: "Wysokość", value: "\(state.bodyHeight) mm")
+        }
+        Panel("Odometria") {
+            ValueRow(label: "X / Z", value: String(format: "%.0f / %.0f mm", state.odometryX, state.odometryZ))
+            ValueRow(label: "Kurs", value: String(format: "%+.0f°", state.odometryYaw * 180 / .pi))
+            ValueRow(label: "Przesunięcie tułowia", value: String(format: "%+.1f / %+.1f mm", state.bodyShiftX, state.bodyShiftZ))
+        }
+        Panel("Stopy") {
+            if contacts.feedbackAvailable {
+                ForEach(QuadLeg.allCases) { leg in
+                    let index = leg.wireIndex
+                    HStack(spacing: 6) {
+                        Circle().fill(contacts.isEarlyTouchdown(index) ? Theme.orange
+                                      : contacts.isDetected(index) ? Theme.green : Theme.faint)
+                            .frame(width: 7, height: 7)
+                        Text(leg.rawValue).font(Theme.monoSmall).foregroundStyle(Theme.text)
+                        Spacer()
+                        Text("\(contacts.confidence[index])%").font(Theme.monoSmall).foregroundStyle(Theme.muted)
+                    }
+                }
+            } else {
+                Text("Brak odczytu kontaktu").font(Theme.label).foregroundStyle(Theme.muted)
             }
-            .onChange(of: aura.robotState.bodyHeight) { _, height in
-                guard !aura.robotState.armed, (120...250).contains(height) else { return }
-                model.bodyHeight = Double(height)
+            ValueRow(label: "Korekcja stóp", value: state.swingBalanceActive ? "aktywna" : "—",
+                     tint: state.swingBalanceActive ? Theme.green : Theme.muted)
+        }
+        Panel("Pad") {
+            ValueRow(label: "Bateria", value: frame.controller.battery.map { "\($0)%" } ?? "—")
+            ValueRow(label: "Raporty", value: "\(frame.controller.sampleCount)")
+        }
+    }
+}
+
+private struct Robot3DGaitTab: View {
+    @ObservedObject var model: QuadrupedModel
+    @ObservedObject var aura: AuraConnection
+
+    var body: some View {
+        let profile = aura.gaitProfile(model.configuredGait)
+        let editable = aura.isConnected && !aura.robotState.armed
+        let singleFoot = model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5
+        Panel("Profil chodu") {
+            Picker("", selection: $model.configuredGait) {
+                ForEach(AuraGaitProfile.defaults) { Text($0.title).tag($0.gait) }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            ProfileSlider(title: "Długość", value: binding(\.strideMm), range: 15...300, step: 1,
+                          text: "\(profile.strideMm) mm", editable: editable) { save() }
+            ProfileSlider(title: "Wysokość", value: binding(\.stepHeightMm), range: 5...100, step: 1,
+                          text: "\(profile.stepHeightMm) mm", editable: editable) { save() }
+            ProfileSlider(title: "Częstotliwość", value: Binding(
+                get: { aura.gaitProfile(model.configuredGait).frequencyHz },
+                set: { value in var changed = aura.gaitProfile(model.configuredGait)
+                    changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
+                          range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
+                          text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save() }
+            ProfileSlider(title: "Kontakt", value: binding(\.dutyPercent), range: singleFoot ? 76...90 : 45...85, step: 1,
+                          text: "\(profile.dutyPercent)%", editable: editable) { save() }
+        }
+        .help("Zapis tylko po rozbrojeniu. Tryb 4 używa własnego profilu z firmware.")
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<AuraGaitProfile, Int>) -> Binding<Double> {
+        Binding(get: { Double(aura.gaitProfile(model.configuredGait)[keyPath: keyPath]) },
+                set: { value in var changed = aura.gaitProfile(model.configuredGait)
+                    changed[keyPath: keyPath] = Int(value.rounded()); aura.replaceGaitProfileLocally(changed) })
+    }
+
+    private func save() { aura.setRobotGaitProfile(aura.gaitProfile(model.configuredGait)) }
+}
+
+private struct ProfileSlider: View {
+    let title: String
+    let value: Binding<Double>
+    let range: ClosedRange<Double>
+    let step: Double
+    let text: String
+    let editable: Bool
+    let commit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title).font(Theme.label).foregroundStyle(Theme.muted)
+                Spacer()
+                Text(text).font(Theme.monoSmall).foregroundStyle(Theme.text)
+            }
+            Slider(value: value, in: range, step: step) { editing in if !editing { commit() } }
+                .controlSize(.small)
+                .disabled(!editable)
+        }
+    }
+}
+
+private struct Robot3DSetupTab: View {
+    @ObservedObject var model: QuadrupedModel
+    @ObservedObject var aura: AuraConnection
+
+    var body: some View {
+        let editable = aura.isConnected && !aura.robotState.armed
+        Panel("Stanie") {
+            ProfileSlider(title: "Wysokość tułowia", value: $model.bodyHeight, range: 120...250, step: 1,
+                          text: "\(Int(model.bodyHeight.rounded())) mm", editable: editable) {
+                aura.setRobotBodyHeight(Int(model.bodyHeight.rounded()))
+            }
+            ProfileSlider(title: "Rozstaw stóp", value: Binding(get: { model.finalFootSpreadMm },
+                                                                set: { model.finalFootSpreadMm = $0 }),
+                          range: 170...430, step: 1, text: "\(Int(model.finalFootSpreadMm.rounded())) mm",
+                          editable: editable) {
+                aura.setRobotLateralStance(Int(model.lateralStance.rounded()))
+            }
+        }
+        .help("Zapisywane w Aurze tylko po rozbrojeniu; nie wysyła ruchu.")
+        Panel("Środek masy") {
+            ProfileSlider(title: "Przód / tył", value: $model.staticComForward, range: -120...120, step: 1,
+                          text: "\(Int(model.staticComForward.rounded())) mm", editable: editable) { saveBalance() }
+            ProfileSlider(title: "Lewo / prawo", value: $model.staticComLeft, range: -120...120, step: 1,
+                          text: "\(Int(model.staticComLeft.rounded())) mm", editable: editable) { saveBalance() }
+            ProfileSlider(title: "Margines podparcia", value: $model.staticSupportMargin, range: 5...45, step: 1,
+                          text: "\(Int(model.staticSupportMargin.rounded())) mm", editable: editable) { saveBalance() }
+            Button("Wycentruj") {
+                model.staticComForward = 0; model.staticComLeft = 0
+                saveBalance()
+            }
+            .controlSize(.small)
+            .disabled(!editable)
+        }
+        .help("+ przód / lewo. Przesunięcie baterii względem środka ramy.")
+        Panel("Podparcie") {
+            Text(model.gravityStatusText).font(Theme.label).foregroundStyle(Theme.muted)
+        }
+    }
+
+    private func saveBalance() {
+        aura.setRobotStaticBalance(comForward: Int(model.staticComForward.rounded()),
+                                   comLeft: Int(model.staticComLeft.rounded()),
+                                   supportMargin: Int(model.staticSupportMargin.rounded()))
+    }
+}
+
+private struct Robot3DGeometryTab: View {
+    @ObservedObject var model: QuadrupedModel
+    let legs: [AuraRobotLegTelemetry]
+
+    var body: some View {
+        Panel("Rama") {
+            DimensionField(title: "Długość", value: $model.frameLength)
+            DimensionField(title: "Szerokość", value: $model.frameWidth)
+            DimensionField(title: "Odsunięcie narożnika", value: $model.cornerInset)
+        }
+        Panel("Noga") {
+            DimensionField(title: "Yaw → hip", value: $model.yawLink)
+            DimensionField(title: "Hip → knee", value: $model.upperLeg)
+            DimensionField(title: "Knee → stopa", value: $model.lowerLeg)
+        }
+        Panel("Kąty osi") {
+            Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 5) {
+                GridRow {
+                    Text("").gridColumnAlignment(.leading)
+                    Text("Ab/ad"); Text("Hip"); Text("Knee")
+                }
+                .font(Theme.label).foregroundStyle(Theme.muted)
+                ForEach(QuadLeg.allCases) { leg in
+                    let index = leg.wireIndex
+                    let feedback = legs.indices.contains(index) ? legs[index] : AuraRobotLegTelemetry(id: index)
+                    let angles = feedback.present.allSatisfy { $0 } ? feedback.measuredDegrees : feedback.targetDegrees
+                    GridRow {
+                        Text(leg.rawValue).foregroundStyle(Theme.text)
+                        ForEach(0..<3, id: \.self) { axis in
+                            Text(String(format: "%+.0f°", angles[axis])).foregroundStyle(Theme.text)
+                        }
+                    }
+                    .font(Theme.monoSmall)
+                }
+            }
+        }
     }
 }

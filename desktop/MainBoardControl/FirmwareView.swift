@@ -107,8 +107,8 @@ struct FirmwareView: View {
                             .foregroundStyle(.orange)
                     }
                     Toggle("Najpierw pobierz najnowszy kod z GitHuba (git pull)", isOn: $updater.pullFirst)
-                    Text("Podłącz Aurę kablem USB-C. Wgrywanie nie kasuje kalibracji serw ani ustawień — kopia pamięci ustawień trafia do backups/.")
-                        .font(.callout).foregroundStyle(.secondary)
+                    Text("USB-C · ustawienia i kalibracja bez kasowania · kopia NVS w backups/")
+                        .font(Theme.label).foregroundStyle(Theme.muted)
                     HStack {
                         Button {
                             updater.confirm = true

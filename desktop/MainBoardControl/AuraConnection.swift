@@ -370,6 +370,8 @@ final class AuraConnection: NSObject, ObservableObject {
     @Published var calibrationLivePreviewActive = false
     @Published var message = ""
     let robotRenderChannel = AuraRobotRenderChannel()
+    let history = TelemetryHistory()
+    let route = RouteRecorder()
 
     var detectedToFSensorIndices: [Int] {
         tofSensors.indices.filter { tofSensors[$0].present }
@@ -1316,6 +1318,8 @@ final class AuraConnection: NSObject, ObservableObject {
                                                            legs: pendingRobotLegTelemetry,
                                                            controller: pendingDualSense,
                                                            contacts: pendingFootContacts))
+                recordHistorySample()
+                route.ingest(state: pendingRobotState, imu: pendingIMU, attitude: pendingAttitude)
 
                 let now = ProcessInfo.processInfo.systemUptime
                 guard now - lastUICommitUptime >= uiCommitInterval else { return }
@@ -1335,6 +1339,30 @@ final class AuraConnection: NSObject, ObservableObject {
                 robotState = pendingRobotState
                 robotLegTelemetry = pendingRobotLegTelemetry
             }
+        }
+    }
+
+    private func recordHistorySample() {
+        let power = pendingPower, imu = pendingIMU, attitude = pendingAttitude
+        let state = pendingRobotState, legs = pendingRobotLegTelemetry, contacts = pendingFootContacts
+        history.append { time in
+            TelemetrySample(
+                time: time, busVoltage: power.servoBusVoltage, current: power.current, power: power.power,
+                roll: attitude.rollDegrees, pitch: attitude.pitchDegrees,
+                referenceRoll: attitude.referenceCaptured ? attitude.referenceRollDegrees : 0,
+                referencePitch: attitude.referenceCaptured ? attitude.referencePitchDegrees : 0,
+                correctionRoll: attitude.correctionRollDegrees, correctionPitch: attitude.correctionPitchDegrees,
+                gyro: SIMD3(imu.gyroscope[0], imu.gyroscope[1], imu.gyroscope[2]),
+                accel: SIMD3(imu.acceleration[0], imu.acceleration[1], imu.acceleration[2]),
+                imuTemperature: imu.temperature,
+                servoTemperature: legs.flatMap { $0.temperature.map(Double.init) },
+                trackingError: legs.flatMap { leg in
+                    (0..<3).map { leg.present[$0] ? leg.targetDegrees[$0] - leg.measuredDegrees[$0] : 0 } },
+                bodyHeight: Double(state.bodyHeight), phase: state.phase,
+                forward: state.forward, lateral: state.lateral, turn: state.turn,
+                bodyShiftX: state.bodyShiftX, bodyShiftZ: state.bodyShiftZ,
+                odometryX: state.odometryX, odometryZ: state.odometryZ, odometryYaw: state.odometryYaw,
+                armed: state.armed, mode: state.selectedGait, contacts: contacts.detectedMask)
         }
     }
 
