@@ -284,6 +284,11 @@ static struct {
 // A late IMU sample (the shared I2C bus was busy) holds the correction
 // for this long instead of dropping it to zero, which was a kick.
 #define ROBOT_ATTITUDE_GRACE_US 250000
+// The IMU's roll runs opposite to the IK roll; its pitch matches. Verified on
+// Aura 2026-10-11 with the posture loop running for the first time: pitch
+// balanced, roll pushed the wrong way. Used by the posture loop and mode 4's
+// capture point. Mode 3's swing estimate keeps its own sign untouched.
+#define ROBOT_IMU_ROLL_SIGN (-1.0f)
 // The posture controller uses the same bounded-acceleration generator as a
 // joint command. A rate limiter alone changes velocity instantaneously when
 // IMU error changes, which appears as a kick at the foot during a gait.
@@ -1115,7 +1120,7 @@ static void update_attitude_reference_capture(bool armed, bool operator_idle,
 // `hold` keeps the last correction (mode 4 on the move): on a line of two
 // feet the posture cannot be corrected, and its tilt is the fall the foot
 // placement needs to see, not something to level away.
-static void update_attitude_controller(bool armed, bool moving, bool hold,
+static void update_attitude_controller(bool armed, bool moving, bool hold, bool correct,
                                        float pose_roll, float pose_pitch)
 {
     mpu6050_attitude_t measured = {0};
@@ -1141,7 +1146,20 @@ static void update_attitude_controller(bool armed, bool moving, bool hold,
                                   now_us - attitude_control.last_fresh_us <= ROBOT_ATTITUDE_GRACE_US);
     const bool usable = armed && attitude_control.enabled &&
                         attitude_control.reference_valid && recent;
-    if (usable && (!fresh || (hold && attitude_control.active))) {
+    if (usable && !correct) {
+        // Modes 3-5 run without the posture loop, as they were tuned; the
+        // reference stays for mode 4's capture point. A correction left from
+        // modes 1-2 glides back to zero.
+        const joint_trajectory_limits_t glide = {
+            .maximum_velocity = ROBOT_ATTITUDE_STANDING_SLEW_RAD_S,
+            .maximum_acceleration = ROBOT_ATTITUDE_STANDING_ACCEL_RAD_S2,
+        };
+        attitude_control.correction_roll_radians = joint_trajectory_step(
+            &attitude_trajectory[0], 0.0f, (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, glide);
+        attitude_control.correction_pitch_radians = joint_trajectory_step(
+            &attitude_trajectory[1], 0.0f, (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, glide);
+        attitude_control.active = false;
+    } else if (usable && (!fresh || (hold && attitude_control.active))) {
         // Correction and its trajectories stay where they are: holding a
         // trot step, or waiting out one late IMU sample.
     } else if (!usable) {
@@ -1151,8 +1169,8 @@ static void update_attitude_controller(bool armed, bool moving, bool hold,
         joint_trajectory_reset(&attitude_trajectory[0], 0.0f);
         joint_trajectory_reset(&attitude_trajectory[1], 0.0f);
     } else {
-        const float roll_error = wrap_radians(attitude_control.reference_roll_radians +
-                                              pose_roll - measured.roll_radians);
+        const float roll_error = pose_roll + ROBOT_IMU_ROLL_SIGN *
+            wrap_radians(attitude_control.reference_roll_radians - measured.roll_radians);
         const float pitch_error = wrap_radians(attitude_control.reference_pitch_radians +
                                                pose_pitch - measured.pitch_radians);
         // Keep a bounded corrective command even beyond the nominal
@@ -1168,7 +1186,7 @@ static void update_attitude_controller(bool armed, bool moving, bool hold,
             // torque controller. The known-good standing controller is intact.
             const float kd = moving ? 0.08f : 0.0f;
             const float desired_roll = robot_balance_posture_target(roll_error,
-                measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
+                ROBOT_IMU_ROLL_SIGN * measured.roll_rate_rad_s, proportional_gain, kd, correction_limit);
             const float desired_pitch = robot_balance_posture_target(pitch_error,
                 measured.pitch_rate_rad_s, proportional_gain, kd, correction_limit);
             const joint_trajectory_limits_t posture_limits = {
@@ -1583,12 +1601,13 @@ static void apply_trot_balance(robot_vec3_t world_feet[ROBOT_LEG_COUNT],
         // Unplanned tilt in the IK convention: measured minus reference minus
         // the posture held while trotting.
         const robot_tilt_t tilt = {
-            .roll = wrap_radians(balance_imu.roll_radians -
-                                 attitude_control.reference_roll_radians) - held_roll,
+            .roll = ROBOT_IMU_ROLL_SIGN * wrap_radians(balance_imu.roll_radians -
+                                                       attitude_control.reference_roll_radians) - held_roll,
             .pitch = wrap_radians(balance_imu.pitch_radians -
                                   attitude_control.reference_pitch_radians) - held_pitch,
         };
-        const robot_tilt_t rate = {balance_imu.roll_rate_rad_s, balance_imu.pitch_rate_rad_s};
+        const robot_tilt_t rate = {ROBOT_IMU_ROLL_SIGN * balance_imu.roll_rate_rad_s,
+                                   balance_imu.pitch_rate_rad_s};
         xi = robot_walk_balance_capture(&trot_balance, &config,
                                         robot_walk_tilt_displacement(tilt, com_height_mm),
                                         robot_walk_tilt_velocity(rate, com_height_mm),
@@ -1745,7 +1764,10 @@ static void gait_tick(void)
     const float pose_pitch = joint_trajectory_step(&pose_trajectory[1],
         pose_mode ? -input.forward * ROBOT_POSE_MAX_PITCH_RAD : 0.0f,
         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f, pose_limits);
-    update_attitude_controller(armed, active, trot_mode && active, pose_roll, pose_pitch);
+    // The posture loop runs in modes 1 (balance) and 2 (torso pose) only.
+    const bool posture_mode = state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_BALANCE ||
+                              state.selected_gait == (robot_gait_mode_t)ROBOT_MODE_POSE;
+    update_attitude_controller(armed, active, trot_mode && active, posture_mode, pose_roll, pose_pitch);
     section_mark(AURA_GAIT_SECTION_ATTITUDE);
     const float phase_rate = armed ? robot_gait_phase_rate(reference_error, has_feedback, feedback_error) : 1.0f;
 

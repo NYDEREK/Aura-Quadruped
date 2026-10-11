@@ -9,13 +9,14 @@
 
 #define ESTIMATOR_PERIOD_MS 20
 #define DEG_TO_RAD 0.01745329252f
-// Orientation of the MPU6050 relative to the IK frame. The posture loop is
-// stable only if the measured roll/pitch carry the IK sign (roll > 0 lowers
-// the left side), which means the module sits turned 180 deg about its Z
-// (up) axis compared with mpu6050.c's comment. In the IK frame the specific
-// force is then (-a_x, a_y, -a_z) of the reported vector. If a test on the
-// robot shows the opposite, this one constant flips both.
-#define ESTIMATOR_IMU_MOUNT_SIGN (-1.0f)
+// IMU -> IK frame (X forward, Y up, Z left), established on Aura 2026-10-11:
+// roll runs opposite and pitch the same way (the posture loop balanced
+// pitch and pushed roll the wrong way), and with those only accelerometer x
+// opposite, z unchanged keeps gravity vertical on tilted static samples.
+#define IMU_ROLL_SIGN (-1.0f)
+#define IMU_PITCH_SIGN (1.0f)
+#define IMU_ACCEL_X_SIGN (-1.0f)
+#define IMU_ACCEL_Z_SIGN (1.0f)
 
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static robot_estimator_t estimator;
@@ -106,16 +107,16 @@ static void estimator_task(void *argument)
             }
         }
         if (count && attitude.valid) {
-            const float m = ESTIMATOR_IMU_MOUNT_SIGN;
             robot_estimator_input_t input = {
                 .dt = ESTIMATOR_PERIOD_MS / 1000.0f,
                 .armed = snapshot.armed,
                 .walking = snapshot.walking,
                 .commanded = snapshot.commanded,
-                .roll_rad = -m * attitude.roll_radians,
-                .pitch_rad = -m * attitude.pitch_radians,
+                .roll_rad = IMU_ROLL_SIGN * attitude.roll_radians,
+                .pitch_rad = IMU_PITCH_SIGN * attitude.pitch_radians,
                 .yaw_rate_rad_s = gyro[1] * DEG_TO_RAD,
-                .accel_mm_s2 = {m * accel[0] * 9810.0f, accel[1] * 9810.0f, m * accel[2] * 9810.0f},
+                .accel_mm_s2 = {IMU_ACCEL_X_SIGN * accel[0] * 9810.0f, accel[1] * 9810.0f,
+                                IMU_ACCEL_Z_SIGN * accel[2] * 9810.0f},
                 .accel_norm_g = sqrtf(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2]),
                 .use_accel = true,
             };
