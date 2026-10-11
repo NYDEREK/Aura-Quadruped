@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 // JetBrains-style product icon: angular gradient shards in the two Aura
-// accents behind a black square with white "Au" and an underscore bar.
+// accents behind a black square with a large white "Au".
 // Coordinates are in a 1024 px canvas, origin bottom-left; everything stays
 // inside the 100…924 macOS icon safe area.
 
@@ -47,18 +47,16 @@ shard([(120, 924), (730, 896), (440, 430), (100, 600)], [lime, limeLight], angle
 NSColor.black.setFill()
 NSRect(x: 252, y: 252, width: 520, height: 520).fill()
 
-let letters = "Au" as NSString
-let attributes: [NSAttributedString.Key: Any] = [
-    .font: NSFont.systemFont(ofSize: 230, weight: .heavy),
+// "Au" as large as the square allows, centred on its actual glyph bounds.
+let letters = NSAttributedString(string: "Au", attributes: [
+    .font: NSFont.systemFont(ofSize: 350, weight: .heavy),
     .foregroundColor: NSColor.white,
-    .kern: -6,
-]
-let lettersSize = letters.size(withAttributes: attributes)
-letters.draw(at: NSPoint(x: 296, y: 772 - 40 - lettersSize.height), withAttributes: attributes)
-
-// The underscore bar, bottom-left as in every JetBrains mark.
-NSColor.white.setFill()
-NSRect(x: 300, y: 300, width: 210, height: 34).fill()
+    .kern: -10,
+])
+let line = CTLineCreateWithAttributedString(letters)
+let glyphs = CTLineGetImageBounds(line, context.cgContext)
+context.cgContext.textPosition = CGPoint(x: 512 - glyphs.midX, y: 512 - glyphs.midY)
+CTLineDraw(line, context.cgContext)
 
 NSGraphicsContext.restoreGraphicsState()
 guard let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("could not render icon") }

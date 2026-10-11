@@ -111,10 +111,44 @@ private final class RobotRig {
     }
 }
 
+// Camera input for the route scene. SceneKit's built-in camera control is
+// off: its zoom changed the field of view and a trackpad rotate rolled the
+// camera, and both carried over into the other views.
+final class RouteSCNView: SCNView {
+    weak var controller: RouteScene?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { MainActor.assumeIsolated { controller?.resetView() } }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let dx = Double(event.deltaX), dy = Double(event.deltaY), height = Double(max(1, bounds.height))
+        MainActor.assumeIsolated { controller?.drag(dx: dx, dy: dy, viewHeight: height) }
+    }
+
+    override func rightMouseDragged(with event: NSEvent) { mouseDragged(with: event) }
+
+    override func scrollWheel(with event: NSEvent) {
+        let step = event.hasPreciseScrollingDeltas ? 0.008 : 0.08
+        let factor = exp(-Double(event.scrollingDeltaY) * step)
+        MainActor.assumeIsolated { controller?.zoom(factor) }
+    }
+
+    override func magnify(with event: NSEvent) {
+        let factor = 1 / max(0.2, 1 + Double(event.magnification))
+        MainActor.assumeIsolated { controller?.zoom(factor) }
+    }
+
+    override func rotate(with event: NSEvent) {}
+}
+
 @MainActor
 final class RouteScene: NSObject {
     let scene = SCNScene()
     let camera = SCNNode()
+    weak var view: SCNView?
     // Aura's frame (X forward, Y up, Z left) is the mirror of SceneKit's;
     // all content sits in this Z-mirrored node, the camera outside it.
     private let world: SCNNode = { let node = SCNNode(); node.scale = SCNVector3(1, 1, -1); return node }()
@@ -127,7 +161,21 @@ final class RouteScene: NSObject {
     private var subscription: AnyCancellable?
     private var drawnCount = -1
     private var drawnComparison: UUID?
+    private weak var recorder: RouteRecorder?
     private var mode: RouteCameraMode?
+    private var resetToken = -1
+
+    // Camera state. Orbit: angles around Aura in scene coordinates, always
+    // level (world up is fixed, no roll). Top: zoom factor and pan in mm.
+    // Follow: distance behind Aura and a smoothed heading.
+    private var azimuth = Double.pi + 0.25
+    private var elevation = 0.45
+    private var distance = 1200.0
+    private var topZoom = 1.0
+    private var topPan = SIMD2<Double>(0, 0)
+    private var followDistance = 950.0
+    private var followElevation = 0.38
+    private var followHeading: Double?
 
     override init() {
         super.init()
@@ -136,7 +184,7 @@ final class RouteScene: NSObject {
         camera.camera = SCNCamera()
         camera.camera?.zNear = 10
         camera.camera?.zFar = 200_000
-        camera.camera?.fieldOfView = 45
+        camera.camera?.fieldOfView = 40
         scene.rootNode.addChildNode(camera)
 
         // Floor grid: 0.25 m minor, 1 m major, 20 x 20 m, plus the start axes.
@@ -171,17 +219,18 @@ final class RouteScene: NSObject {
         scene.rootNode.addChildNode(ambient)
     }
 
+    // The robot and the camera follow Aura at the 50 Hz telemetry rate.
     func bind(_ channel: AuraRobotRenderChannel) {
         guard subscription == nil else { return }
         subscription = channel.frames.receive(on: RunLoop.main).sink { [weak self] frame in
             guard let self else { return }
             self.snapshot = self.model.poseFromAura(frame.legs, state: frame.state, controller: frame.controller)
+            self.refreshLive()
         }
     }
 
-    func update(_ recorder: RouteRecorder, mode: RouteCameraMode, view: SCNView) {
-        SCNTransaction.begin()
-        SCNTransaction.disableActions = true
+    func update(_ recorder: RouteRecorder, mode: RouteCameraMode, resetToken: Int) {
+        self.recorder = recorder
         if recorder.points.count != drawnCount {
             drawnCount = recorder.points.count
             path.geometry = lineGeometry(recorder.points.map { SCNVector3(Float($0.x), Float($0.y + 3), Float($0.z)) },
@@ -195,67 +244,141 @@ final class RouteScene: NSObject {
                 (recorder.comparison?.points ?? []).map { SCNVector3(Float($0.x), Float($0.y + 2), Float($0.z)) },
                 strip: true, color: NSColor(rgb: 0x8C8F96))
         }
+        // Every switch starts that view from its default framing.
+        if mode != self.mode || resetToken != self.resetToken {
+            self.mode = mode
+            self.resetToken = resetToken
+            resetView()
+        } else {
+            refreshLive()
+        }
+    }
+
+    // Default framing: behind Aura and a little to its left, looking ahead.
+    func resetView() {
+        let heading = recorder?.heading ?? 0
+        azimuth = .pi - heading + 0.25
+        elevation = 0.45
+        distance = 1200
+        topZoom = 1
+        topPan = .zero
+        followDistance = 950
+        followElevation = 0.38
+        followHeading = nil
+        refreshLive()
+    }
+
+    func drag(dx: Double, dy: Double, viewHeight: Double) {
+        switch mode ?? .orbit {
+        case .orbit:
+            azimuth += dx * 0.008
+            elevation = min(1.45, max(0.06, elevation + dy * 0.006))
+        case .top:
+            // Screen up is Aura's +X (forward at the start), screen right its -Z.
+            let mmPerPoint = 2 * topScale() / viewHeight
+            topPan.x += dy * mmPerPoint
+            topPan.y -= dx * mmPerPoint
+        case .follow:
+            followElevation = min(1.2, max(0.1, followElevation + dy * 0.006))
+        }
+        refreshLive()
+    }
+
+    func zoom(_ factor: Double) {
+        switch mode ?? .orbit {
+        case .orbit: distance = min(10_000, max(250, distance * factor))
+        case .top: topZoom = min(20, max(0.05, topZoom * factor))
+        case .follow: followDistance = min(5000, max(300, followDistance * factor))
+        }
+        refreshLive()
+    }
+
+    private func topScale() -> Double {
+        guard let recorder else { return 1200 * topZoom }
+        let p = recorder.position
+        let extent = recorder.points.reduce(600.0) { max($0, abs($1.x - p.x), abs($1.z - p.z)) }
+        return min(12_000, extent * 1.3) * topZoom
+    }
+
+    private func refreshLive() {
+        guard let recorder else { return }
+        SCNTransaction.begin()
+        SCNTransaction.disableActions = true
         let p = recorder.position
         let pose = snapshot ?? model.pose(at: ProcessInfo.processInfo.systemUptime, pad: AuraDualSense())
         rig.apply(pose, dimensions: model.visualFrameDimensions(), position: p, heading: recorder.heading,
                   roll: recorder.roll, pitch: recorder.pitch)
-
-        // Camera lives outside the mirror: Aura (x, y, z) is (x, y, -z) here.
-        let target = SCNVector3(CGFloat(p.x), CGFloat(p.y) + 120, CGFloat(-p.z))
-        switch mode {
-        case .orbit:
-            if self.mode != .orbit {
-                camera.camera?.usesOrthographicProjection = false
-                camera.position = SCNVector3(target.x - 900, 700, target.z + 900)
-                camera.look(at: target)
-                view.allowsCameraControl = true
-                view.defaultCameraController.interactionMode = .orbitTurntable
-                view.defaultCameraController.target = target
-            }
-        case .top:
-            // Map view: Aura forward to the right, its left up, as seen from above.
-            view.allowsCameraControl = false
-            camera.camera?.usesOrthographicProjection = true
-            let extent = recorder.points.reduce(900.0) { max($0, abs($1.x - p.x), abs($1.z - p.z)) }
-            camera.camera?.orthographicScale = min(12_000, extent * 1.3)
-            camera.position = SCNVector3(target.x, 8000, target.z)
-            camera.eulerAngles = SCNVector3(-CGFloat.pi / 2, 0, 0)
-        case .follow:
-            view.allowsCameraControl = false
-            camera.camera?.usesOrthographicProjection = false
-            let h = recorder.heading
-            let back = CGFloat(cos(h) * 900), side = CGFloat(sin(h) * 900)
-            camera.position = SCNVector3(target.x - back, 520, target.z + side)
-            camera.look(at: target)
-        }
-        if self.mode != mode { view.pointOfView = camera }
-        self.mode = mode
+        placeCamera(recorder)
         SCNTransaction.commit()
+        view?.needsDisplay = true
     }
+
+    // The camera lives outside the mirror: Aura (x, y, z) is (x, y, -z) here.
+    private func placeCamera(_ recorder: RouteRecorder) {
+        let p = recorder.position
+        let target = SIMD3<Float>(Float(p.x), Float(p.y) + 120, Float(-p.z))
+        let up = SIMD3<Float>(0, 1, 0), front = SIMD3<Float>(0, 0, -1)
+        switch mode ?? .orbit {
+        case .orbit:
+            camera.camera?.usesOrthographicProjection = false
+            let offset = SIMD3<Float>(Float(cos(elevation) * cos(azimuth)), Float(sin(elevation)),
+                                      Float(cos(elevation) * sin(azimuth))) * Float(distance)
+            camera.simdPosition = target + offset
+            camera.simdLook(at: target, up: up, localFront: front)
+        case .top:
+            camera.camera?.usesOrthographicProjection = true
+            camera.camera?.orthographicScale = topScale()
+            let centre = SIMD3<Float>(target.x + Float(topPan.x), 0, target.z - Float(topPan.y))
+            camera.simdPosition = SIMD3(centre.x, 8000, centre.z)
+            camera.simdLook(at: centre, up: SIMD3(1, 0, 0), localFront: front)
+        case .follow:
+            camera.camera?.usesOrthographicProjection = false
+            // Heading smoothed over about 0.4 s so gait sway does not shake the view.
+            let heading = recorder.heading
+            if let last = followHeading {
+                followHeading = last + remainder(heading - last, 2 * .pi) * 0.05
+            } else {
+                followHeading = heading
+            }
+            let h = followHeading ?? heading
+            let forward = SIMD3<Float>(Float(cos(h)), 0, Float(-sin(h)))
+            let back = Float(cos(followElevation) * followDistance), lift = Float(sin(followElevation) * followDistance)
+            camera.simdPosition = target - forward * back + SIMD3(0, lift, 0)
+            camera.simdLook(at: target + forward * 150, up: up, localFront: front)
+        }
+    }
+}
+
+final class RouteViewState: ObservableObject {
+    @Published var resetToken = 0
 }
 
 struct RouteSceneView: NSViewRepresentable {
     @ObservedObject var recorder: RouteRecorder
     let channel: AuraRobotRenderChannel
     let mode: RouteCameraMode
+    let resetToken: Int
 
     func makeCoordinator() -> RouteScene { RouteScene() }
 
     func makeNSView(context: Context) -> SCNView {
-        let view = SCNView()
+        let view = RouteSCNView()
+        view.controller = context.coordinator
         view.scene = context.coordinator.scene
         view.pointOfView = context.coordinator.camera
+        view.allowsCameraControl = false
         view.backgroundColor = Theme.canvasNS
         view.antialiasingMode = .multisampling4X
-        view.preferredFramesPerSecond = 30
-        view.rendersContinuously = true
+        view.preferredFramesPerSecond = 60
+        view.rendersContinuously = false
+        context.coordinator.view = view
         context.coordinator.bind(channel)
-        context.coordinator.update(recorder, mode: mode, view: view)
+        context.coordinator.update(recorder, mode: mode, resetToken: resetToken)
         return view
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
-        context.coordinator.update(recorder, mode: mode, view: view)
+        context.coordinator.update(recorder, mode: mode, resetToken: resetToken)
     }
 }
 
@@ -263,6 +386,7 @@ struct RouteView: View {
     @EnvironmentObject var aura: AuraConnection
     @EnvironmentObject var recorder: RouteRecorder
     @AppStorage("aura.route.camera") private var mode: RouteCameraMode = .orbit
+    @StateObject private var state = RouteViewState()
 
     var body: some View {
         let _ = recorder.revision
@@ -271,11 +395,16 @@ struct RouteView: View {
                 HStack {
                     TextTabs(tabs: [(.orbit, "Orbit"), (.top, "Top"), (.follow, "Follow")], selection: $mode)
                     Spacer(minLength: 0)
+                    Button("Reset view") { state.resetToken += 1 }
+                        .buttonStyle(AuraButtonStyle(compact: true))
+                        .help("Drag to rotate, scroll or pinch to zoom, double-click to reset.")
+                        .padding(.bottom, 4)
                 }
                 .padding(.horizontal, 8).padding(.top, 8)
                 .background(Theme.panel)
                 Rectangle().fill(Theme.line).frame(height: 1)
-                RouteSceneView(recorder: recorder, channel: aura.robotRenderChannel, mode: mode)
+                RouteSceneView(recorder: recorder, channel: aura.robotRenderChannel, mode: mode,
+                               resetToken: state.resetToken)
                     .overlay(alignment: .topLeading) { RecordingBadge(recorder: recorder) }
             }
             Rectangle().fill(Theme.line).frame(width: 1)
