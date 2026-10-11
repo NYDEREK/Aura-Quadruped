@@ -14,6 +14,7 @@
 #include "joint_trajectory.h"
 #include "robot_control.h"
 #include "robot_gait.h"
+#include "aura_features.h"
 #include "aura_health.h"
 #include "robot_gait_profile.h"
 #include "robot_locomotion.h"
@@ -2016,12 +2017,15 @@ static void gait_task_fn(void *unused)
             aura_health_gait_tick_us((uint32_t)(esp_timer_get_time() - started));
             aura_health_beat(AURA_TASK_GAIT);
         }
-        // Behind schedule (a tick overran 20 ms): drop the missed periods and
-        // still sleep a tick. Running back to back starved CPU 0's idle task
-        // until the task watchdog reset the board (2026-10-11, 20:24).
+        // Behind schedule: catch the missed ticks up, since the gait clock
+        // counts ticks and dropping them slowed walking (41-46 Hz in mode 3),
+        // but sleep 1 ms between them. Back-to-back ticks starved the idle
+        // task into a watchdog reset (2026-10-11, 20:24). More than 100 ms
+        // behind is dropped.
         if (xTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS)) == pdFALSE) {
+            const TickType_t now = xTaskGetTickCount();
+            if (now - wake > pdMS_TO_TICKS(5 * ROBOT_GAIT_PERIOD_MS)) wake = now;
             vTaskDelay(1);
-            wake = xTaskGetTickCount();
         }
     }
 }
@@ -2588,7 +2592,8 @@ esp_err_t robot_gait_start(void)
     // 6 KB: gait_tick alone has a 1 KB frame and mode 4 adds the trot balance
     // and body planner below it; 4 KB left almost no margin, and 8 KB showed
     // over 6 KB unused while RAM is short (~24 KB free with Wi-Fi and BT).
-    return xTaskCreate(gait_task_fn, "robot_gait", 6144, NULL, 8, &gait_task) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+    return xTaskCreatePinnedToCore(gait_task_fn, "robot_gait", 6144, NULL, 8, &gait_task,
+                                   AURA_MOTION_CORE) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot)

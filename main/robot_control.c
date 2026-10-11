@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "robot_control.h"
+#include "aura_features.h"
 #include "aura_health.h"
 #include "esp_timer.h"
 #include "servo_bus.h"
@@ -385,9 +386,11 @@ esp_err_t robot_control_init(void)
 esp_err_t robot_control_start(void)
 {
     if (!robot_mutex) return ESP_ERR_INVALID_STATE;
-    if (!control_task && xTaskCreate(robot_control_task, "robot_control", 4096, NULL, 9, &control_task) != pdPASS)
+    if (!control_task && xTaskCreatePinnedToCore(robot_control_task, "robot_control", 4096, NULL, 9, &control_task,
+                                                 AURA_MOTION_CORE) != pdPASS)
         return ESP_ERR_NO_MEM;
-    if (!feedback_task && xTaskCreate(robot_feedback_task, "robot_feedback", 4096, NULL, 3, &feedback_task) != pdPASS)
+    if (!feedback_task && xTaskCreatePinnedToCore(robot_feedback_task, "robot_feedback", 4096, NULL, 3, &feedback_task,
+                                                  AURA_MOTION_CORE) != pdPASS)
         return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

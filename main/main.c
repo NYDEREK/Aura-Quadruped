@@ -455,9 +455,12 @@ static void vin_radio_guard_task(void *argument)
     battery_gauge_t battery = {0};
 
     while (true) {
-        float vin = 0.0f;
-        const esp_err_t vin_error = power_read_vin(&vin, NULL);
-        const bool external_power = vin_error == ESP_OK && vin > RADIO_VIN_ENABLE_V;
+        // One INA226 + VIN divider sample per pass. The divider is 16 ADC
+        // conversions; it used to be read twice (this task took ~12 % CPU).
+        power_sample_t power;
+        power_read(&power);
+        const float vin = power.battery_v;
+        const bool external_power = power.battery_error == ESP_OK && vin > RADIO_VIN_ENABLE_V;
         // Keep the half-duplex transmitter high impedance whenever the servo
         // supply is absent. USB may power only logic; it must not back-power
         // connected ST3215 input stages through the DATA wire.
@@ -491,8 +494,6 @@ static void vin_radio_guard_task(void *argument)
         // INA226 runs continuous conversions. Sampling its shunt and bus
         // registers at 50 Hz gives the desktop current trace real data at
         // the same cadence as controls, rather than repeating a 1 Hz value.
-        power_sample_t power;
-        power_read(&power);
         app_state_set_power(&power);
         // INA226 VBUS sits directly on VIN and is far more accurate than the
         // ESP32 ADC divider (which reads ~0.2 V high); the ADC is a fallback.

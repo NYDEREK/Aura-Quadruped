@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "mpu6050.h"
 #include "state_estimator_service.h"
+#include "aura_features.h"
 #include "aura_health.h"
 
 #define ESTIMATOR_PERIOD_MS 20
@@ -138,6 +139,7 @@ esp_err_t estimator_service_start(void)
 {
     if (task) return ESP_OK;
     robot_estimator_reset(&estimator);
-    return xTaskCreate(estimator_task, "state_estimator", 3072, NULL, 2, &task) == pdPASS
+    return xTaskCreatePinnedToCore(estimator_task, "state_estimator", 3072, NULL, 2, &task,
+                                   AURA_MOTION_CORE) == pdPASS
         ? ESP_OK : ESP_ERR_NO_MEM;
 }

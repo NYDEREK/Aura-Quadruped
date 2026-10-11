@@ -12,3 +12,13 @@ target_include_directories(${COMPONENT_LIB} PRIVATE
     "$ENV{IDF_PATH}/components/bt/host/bluedroid/common/include"
     "$ENV{IDF_PATH}/components/bt/common/osi/include"
     "$ENV{IDF_PATH}/components/bt/common/include")
+
+# Float-heavy gait and estimator code runs at -O2 instead of the project's
+# -Og; the gait tick and the Kalman step are most of the motion CPU time.
+# Host tests pass at -O2. Servo encoding and calibration code keep -Og.
+set_source_files_properties(
+    robot_gait.c robot_state_estimator.c robot_kinematics.c robot_body_trajectory.c
+    robot_predictive_support.c robot_balance.c robot_walk_balance.c robot_locomotion.c
+    robot_gait_profile.c robot_static_balance.c robot_static_gait_profile.c robot_gait_sync.c
+    robot_contact.c robot_odometry.c joint_trajectory.c attitude_filter.c
+    PROPERTIES COMPILE_OPTIONS "-O2")
