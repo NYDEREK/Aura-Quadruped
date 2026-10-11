@@ -63,15 +63,15 @@ final class RouteScene: NSObject {
 
         scene.rootNode.addChildNode(comparisonPath)
         scene.rootNode.addChildNode(path)
-        startMarker.geometry?.firstMaterial?.diffuse.contents = NSColor(rgb: 0x5FB865)
+        startMarker.geometry?.firstMaterial?.diffuse.contents = Theme.accent2LineNS
         startMarker.geometry?.firstMaterial?.lightingModel = .constant
         scene.rootNode.addChildNode(startMarker)
 
         // Robot: frame-sized slab with a nose cone pointing along +X.
         let body = SCNNode(geometry: SCNBox(width: 360, height: 50, length: 130, chamferRadius: 8))
-        body.geometry?.firstMaterial?.diffuse.contents = NSColor(rgb: 0x3574F0).withAlphaComponent(0.85)
+        body.geometry?.firstMaterial?.diffuse.contents = Theme.accent2NS
         let nose = SCNNode(geometry: SCNCone(topRadius: 0, bottomRadius: 40, height: 90))
-        nose.geometry?.firstMaterial?.diffuse.contents = NSColor(rgb: 0xDFE1E5)
+        nose.geometry?.firstMaterial?.diffuse.contents = Theme.accentNS
         nose.eulerAngles.z = -.pi / 2
         nose.position = SCNVector3(225, 0, 0)
         robot.addChildNode(body)
@@ -97,7 +97,7 @@ final class RouteScene: NSObject {
         if recorder.points.count != drawnCount {
             drawnCount = recorder.points.count
             let vertices = recorder.points.map { scenePoint($0.x, $0.y + 4, $0.z) }
-            path.geometry = lineGeometry(vertices, strip: true, color: NSColor(rgb: 0x548AF7))
+            path.geometry = lineGeometry(vertices, strip: true, color: Theme.accentNS)
             startMarker.isHidden = recorder.points.isEmpty
             if let first = recorder.points.first { startMarker.position = scenePoint(first.x, first.y + 18, first.z) }
         }

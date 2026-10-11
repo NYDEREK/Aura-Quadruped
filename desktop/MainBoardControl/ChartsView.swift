@@ -42,7 +42,7 @@ struct TimeChart: View {
                         LineMark(x: .value("t", sample.time - end), y: .value(s.name, s.value(sample)),
                                  series: .value("seria", s.name))
                             .foregroundStyle(s.color)
-                            .lineStyle(StrokeStyle(lineWidth: 1.3))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                             .interpolationMethod(.linear)
                     }
                 }
@@ -89,20 +89,20 @@ enum ChartSets {
 
     static func power(_ s: [TelemetrySample]) -> [TimeChart] {
         [TimeChart(title: "Napięcie", unit: "V", samples: s,
-                   series: [Series(name: "VBUS", color: Theme.green) { $0.busVoltage }]),
+                   series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }]),
          TimeChart(title: "Prąd serw", unit: "A", samples: s,
-                   series: [Series(name: "I", color: Theme.blue) { $0.current }], format: "%.3f"),
+                   series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f"),
          TimeChart(title: "Moc", unit: "W", samples: s,
                    series: [Series(name: "P", color: Theme.orange) { $0.power }], format: "%.1f")]
     }
 
     static func imu(_ s: [TelemetrySample]) -> [TimeChart] {
         [TimeChart(title: "Przechył", unit: "°", samples: s, series: [
-            Series(name: "roll", color: Theme.blue) { $0.roll - $0.referenceRoll },
-            Series(name: "pitch", color: Theme.orange) { $0.pitch - $0.referencePitch }], format: "%+.1f"),
+            Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
+            Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f"),
          TimeChart(title: "Korekcja postawy", unit: "°", samples: s, series: [
-            Series(name: "roll", color: Theme.blue) { $0.correctionRoll },
-            Series(name: "pitch", color: Theme.orange) { $0.correctionPitch }], format: "%+.1f"),
+            Series(name: "roll", color: Theme.accent) { $0.correctionRoll },
+            Series(name: "pitch", color: Theme.accent2Line) { $0.correctionPitch }], format: "%+.1f"),
          TimeChart(title: "Żyroskop", unit: "°/s", samples: s, series: [
             Series(name: "x", color: Theme.red) { $0.gyro.x },
             Series(name: "y", color: Theme.green) { $0.gyro.y },
@@ -125,8 +125,8 @@ enum ChartSets {
 
     static func gait(_ s: [TelemetrySample]) -> [TimeChart] {
         [TimeChart(title: "Komenda", unit: "", samples: s, series: [
-            Series(name: "przód", color: Theme.blue) { $0.forward },
-            Series(name: "bok", color: Theme.green) { $0.lateral },
+            Series(name: "przód", color: Theme.accent) { $0.forward },
+            Series(name: "bok", color: Theme.accent2Line) { $0.lateral },
             Series(name: "skręt", color: Theme.orange) { $0.turn }], format: "%+.2f"),
          TimeChart(title: "Wysokość tułowia", unit: "mm", samples: s,
                    series: [Series(name: "h", color: Theme.teal) { $0.bodyHeight }], format: "%.0f"),
@@ -247,12 +247,12 @@ struct OverviewView: View {
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
                     TimeChart(title: "Napięcie", unit: "V", samples: samples,
-                              series: [Series(name: "VBUS", color: Theme.green) { $0.busVoltage }])
+                              series: [Series(name: "VBUS", color: Theme.accent) { $0.busVoltage }])
                     TimeChart(title: "Prąd serw", unit: "A", samples: samples,
-                              series: [Series(name: "I", color: Theme.blue) { $0.current }], format: "%.3f")
+                              series: [Series(name: "I", color: Theme.accent2Line) { $0.current }], format: "%.3f")
                     TimeChart(title: "Przechył", unit: "°", samples: samples, series: [
-                        Series(name: "roll", color: Theme.blue) { $0.roll - $0.referenceRoll },
-                        Series(name: "pitch", color: Theme.orange) { $0.pitch - $0.referencePitch }], format: "%+.1f")
+                        Series(name: "roll", color: Theme.accent) { $0.roll - $0.referenceRoll },
+                        Series(name: "pitch", color: Theme.accent2Line) { $0.pitch - $0.referencePitch }], format: "%+.1f")
                     TimeChart(title: "Temperatura serw", unit: "°C", samples: samples, series: (0..<4).map { leg in
                         Series(name: ChartSets.legs[leg], color: Theme.series[leg]) { legMax($0.servoTemperature, leg) } },
                               format: "%.0f")

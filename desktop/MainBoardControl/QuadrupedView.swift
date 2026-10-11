@@ -1472,8 +1472,8 @@ private final class QuadrupedScene: NSObject {
     private let centreOfMassMarker = SCNNode(geometry: SCNSphere(radius: 5.4))
     private let centreOfMassProjection = SCNNode(geometry: SCNCylinder(radius: 5.5, height: 1.4))
     private let frameColor = NSColor(calibratedWhite: 0.86, alpha: 1)
-    private let leftColor = NSColor(red: 0.05, green: 0.75, blue: 0.62, alpha: 1)
-    private let rightColor = NSColor(red: 1, green: 0.46, blue: 0.17, alpha: 1)
+    private let leftColor = Theme.accentNS
+    private let rightColor = Theme.accent2LineNS
 
     override init() {
         super.init(); scene.background.contents = Theme.canvasNS

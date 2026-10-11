@@ -91,8 +91,8 @@ struct IMUView: View {
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 12)], spacing: 12) {
                     TimeChart(title: "Przechył", unit: "°", samples: samples, series: [
-                        Series(name: "roll", color: Theme.blue) { $0.roll },
-                        Series(name: "pitch", color: Theme.orange) { $0.pitch }], format: "%+.1f")
+                        Series(name: "roll", color: Theme.accent) { $0.roll },
+                        Series(name: "pitch", color: Theme.accent2Line) { $0.pitch }], format: "%+.1f")
                     TimeChart(title: "Żyroskop", unit: "°/s", samples: samples, series: [
                         Series(name: "x", color: Theme.red) { $0.gyro.x },
                         Series(name: "y", color: Theme.green) { $0.gyro.y },
@@ -741,7 +741,7 @@ private struct Sidebar: View {
                             .foregroundStyle(selected ? Theme.text : Theme.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(selected ? Theme.accent.opacity(0.28) : .clear,
+                            .background(selected ? Theme.accent2.opacity(0.55) : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                             .contentShape(Rectangle())
                     }
@@ -854,7 +854,7 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .background(Theme.canvas)
         .preferredColorScheme(.dark)
-        .tint(Theme.accent)
+        .tint(Theme.accent2)
         .groupBoxStyle(AuraGroupBoxStyle())
         .environmentObject(aura)
         .environmentObject(aura.history)

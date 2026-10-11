@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 // Dark palette after the JetBrains New UI: an editor-grey canvas, slightly
-// lighter tool panels, hairline separators and one blue accent. Every view
-// takes its colours from here.
+// lighter tool panels and hairline separators, with Aura's two accents:
+// lime #BECF00 for highlights and purple #5E43B7 for selection and controls.
+// Every view takes its colours from here.
 enum Theme {
     static let canvas = Color(rgb: 0x1E1F22)
     static let panel = Color(rgb: 0x2B2D30)
@@ -12,7 +13,9 @@ enum Theme {
     static let text = Color(rgb: 0xDFE1E5)
     static let muted = Color(rgb: 0x8C8F96)
     static let faint = Color(rgb: 0x5A5D63)
-    static let accent = Color(rgb: 0x3574F0)
+    static let accent = Color(rgb: 0xBECF00)       // lime: underline, highlight, first series
+    static let accent2 = Color(rgb: 0x5E43B7)      // purple: selection, controls
+    static let accent2Line = Color(rgb: 0x8E78DA)  // purple lightened for thin lines on dark
 
     static let blue = Color(rgb: 0x548AF7)
     static let green = Color(rgb: 0x5FB865)
@@ -21,10 +24,13 @@ enum Theme {
     static let red = Color(rgb: 0xE55765)
     static let purple = Color(rgb: 0xB189F5)
     static let teal = Color(rgb: 0x2AACB8)
-    static let series: [Color] = [blue, orange, green, purple, yellow, teal, red]
+    static let series: [Color] = [accent, accent2Line, blue, orange, teal, yellow, red]
 
     static let canvasNS = NSColor(rgb: 0x1E1F22)
     static let panelNS = NSColor(rgb: 0x2B2D30)
+    static let accentNS = NSColor(rgb: 0xBECF00)
+    static let accent2NS = NSColor(rgb: 0x5E43B7)
+    static let accent2LineNS = NSColor(rgb: 0x8E78DA)
 
     static let label = Font.system(size: 11)
     static let body = Font.system(size: 12)
