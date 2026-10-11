@@ -4,7 +4,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 // One .aura file per session: JSON with a summary, 5 Hz column series,
-// per-mode statistics, an event log and, while Aura is armed, a 25 Hz trace
+// per-mode statistics, an event log and, while Aura is armed, a 10 Hz trace
 // of every joint, the IMU and the gait state. A session starts with the
 // first telemetry from Aura and ends after 5 s without it, or when the app
 // quits. Files live on the Mac only (~/Documents/Aura/Sessions); nothing is
@@ -38,7 +38,8 @@ struct AuraSessionSeries: Codable, Equatable {
     var armed: [Bool] = []
 }
 
-// How Aura behaved in one pad mode, accumulated from every armed 50 Hz frame.
+// How Aura behaved in one pad mode, accumulated from every armed telemetry
+// snapshot (10 Hz).
 // Sums are stored so files can be merged or re-analysed; the RMS values are
 // derived from them.
 struct AuraModeStats: Codable, Equatable, Identifiable {
@@ -83,7 +84,7 @@ struct AuraSessionEvent: Codable, Equatable {
     var detail = ""
 }
 
-// Armed-only 25 Hz record. Fixed-point integers keep the file small:
+// Armed-only record at the telemetry rate (10 Hz). Fixed-point integers keep the file small:
 // angles 0.01°, joints 0.1°, lengths mm (shift 0.1 mm), currents mA,
 // voltages mV. Joint order LF, RF, LR, RR × ab/ad, hip, knee.
 struct AuraSessionTrace: Codable, Equatable {
@@ -91,7 +92,7 @@ struct AuraSessionTrace: Codable, Equatable {
     static let flagArmed = 1, flagMoving = 2, flagSwingBalance = 4, flagTrackingLimited = 8
     static let flagStill = 16, flagJumping = 32, flagFault = 64, flagAttitudeActive = 128
 
-    var rateHz = 25
+    var rateHz = 10
     var t: [Double] = []
     var mode: [Int] = []
     var flags: [Int] = []
@@ -180,10 +181,9 @@ final class SessionLogger: ObservableObject {
     @Published private(set) var live: AuraSession?
     private var current: AuraSession?
     private var lastPublished = Date.distantPast
-    // The live trace stays out of `live` so 50 Hz appends never copy it.
+    // The live trace stays out of `live` so appends never copy it.
     private(set) var liveTrace = AuraSessionTrace()
 
-    private var frameCounter = 0
     private var lastFrame = Date.distantPast
     private var lastSaved = Date.distantPast
     private var energyStart: Double?
@@ -219,7 +219,7 @@ final class SessionLogger: ObservableObject {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.finish() } }
     }
 
-    // 50 Hz from the network path.
+    // One call per telemetry snapshot (10 Hz).
     func ingest(power: AuraPower, state: AuraRobotState, attitude: AuraAttitude, imu: AuraIMU,
                 contacts: AuraFootContacts, legs: [AuraRobotLegTelemetry], route: RouteRecorder) {
         let now = Date()
@@ -231,7 +231,6 @@ final class SessionLogger: ObservableObject {
             energyStart = nil
             energyIntegral = 0
             lastPosition = nil
-            frameCounter = 0
             lastSaved = now
             liveTrace = AuraSessionTrace()
             modeStats = [:]
@@ -241,7 +240,6 @@ final class SessionLogger: ObservableObject {
             previous = nil
         }
         guard let start = current?.start else { return }
-        frameCounter += 1
         let t = now.timeIntervalSince(start)
         let frameDt = lastFrameTime.map { min(0.1, max(0, t - $0)) } ?? 0
         lastFrameTime = t
@@ -252,12 +250,14 @@ final class SessionLogger: ObservableObject {
         accumulateMode(dt: frameDt, state: state, attitude: attitude, imu: imu, contacts: contacts,
                        legs: legs, power: power, route: route, moving: moving)
         recordEvents(t: t, state: state, moving: moving, contacts: contacts)
-        if frameCounter % 2 == 0, state.armed || state.safetyFault.latched {
+        if state.armed || state.safetyFault.latched {
             appendTrace(t: t, state: state, attitude: attitude, imu: imu, contacts: contacts,
                         legs: legs, power: power, moving: moving)
         }
 
-        guard frameCounter % 10 == 0, var session = current else { return }
+        // 5 Hz overview samples, by time so any telemetry rate works.
+        guard var session = current, t - (session.series.t.last ?? -1) >= 0.19 else { return }
+        current = nil       // own the arrays: appends below then never copy them
         let dt = session.series.t.last.map { t - $0 } ?? 0
         let temperature = Double(legs.flatMap(\.temperature).max() ?? 0)
         let position = route.position
@@ -293,21 +293,22 @@ final class SessionLogger: ObservableObject {
         faultLatched = state.safetyFault.latched
         s.duration = t
 
-        var series = session.series
-        series.t.append(t)
-        series.voltage.append(power.servoBusVoltage)
-        series.current.append(power.current)
-        series.power.append(power.power)
-        series.speed.append(route.speed)
-        series.x.append(position.x); series.y.append(position.y); series.z.append(position.z)
-        series.heading.append(route.heading)
-        series.roll.append(route.roll); series.pitch.append(route.pitch)
-        series.servoTemperature.append(temperature)
-        series.mode.append(state.selectedGait)
-        series.armed.append(state.armed)
+        session.series.t.append(t)
+        session.series.voltage.append(power.servoBusVoltage)
+        session.series.current.append(power.current)
+        session.series.power.append(power.power)
+        session.series.speed.append(route.speed)
+        session.series.x.append(position.x)
+        session.series.y.append(position.y)
+        session.series.z.append(position.z)
+        session.series.heading.append(route.heading)
+        session.series.roll.append(route.roll)
+        session.series.pitch.append(route.pitch)
+        session.series.servoTemperature.append(temperature)
+        session.series.mode.append(state.selectedGait)
+        session.series.armed.append(state.armed)
 
         session.summary = s
-        session.series = series
         session.modes = modeStats.values.sorted { $0.mode < $1.mode }
         session.events = events
         session.end = now

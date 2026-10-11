@@ -88,7 +88,7 @@ final class RouteRecorder: ObservableObject {
     var distance: Double { RouteRecord(name: "", created: Date(), points: points).distance }
     var duration: Double { (points.last?.t ?? 0) - (points.first?.t ?? 0) }
 
-    // 50 Hz, from the network path.
+    // One call per telemetry snapshot (10 Hz).
     func ingest(state: AuraRobotState, imu: AuraIMU, attitude: AuraAttitude) {
         // Aura's gait tick is the clock: 20 ms per tick, immune to Wi-Fi jitter.
         guard let previous = lastTick else { lastTick = state.tickCount; return }

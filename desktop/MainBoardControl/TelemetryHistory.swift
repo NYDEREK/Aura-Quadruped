@@ -25,19 +25,17 @@ struct TelemetrySample {
     var contacts: UInt8
 }
 
-// Ring buffer of TelemetrySample at 25 Hz, 10 minutes deep. Appends come from
-// the 50 Hz network path; observers are told about new data at most 4 times
-// a second, so charts never redraw at the transport rate.
+// Ring buffer of TelemetrySample, one per 10 Hz telemetry snapshot, 10
+// minutes deep. Observers are told about new data at most 4 times a second.
 @MainActor
 final class TelemetryHistory: ObservableObject {
-    static let capacity = 25 * 600
+    static let capacity = 10 * 600
 
     @Published private(set) var revision = 0
     @Published var paused = false
 
     private var buffer: [TelemetrySample] = []
     private var head = 0
-    private var frameParity = false
     private let start = ProcessInfo.processInfo.systemUptime
     private var dirty = false
     private var timer: AnyCancellable?
@@ -57,8 +55,6 @@ final class TelemetryHistory: ObservableObject {
 
     func append(_ make: (Double) -> TelemetrySample) {
         // Pause freezes the charts only; recording continues underneath.
-        frameParity.toggle()
-        guard frameParity else { return }
         let sample = make(now)
         if buffer.count < Self.capacity {
             buffer.append(sample)

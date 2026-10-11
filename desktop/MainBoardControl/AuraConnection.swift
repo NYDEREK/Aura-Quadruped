@@ -418,12 +418,11 @@ final class AuraConnection: NSObject, ObservableObject {
     private var pendingToFSensors = [AuraToFSensor(id: 0, address: 0x30), AuraToFSensor(id: 1, address: 0x31)]
     private var pendingDualSense = AuraDualSense()
     private var pendingChartPoint: CurrentPoint?
-    // The board still delivers a complete robot frame at 50 Hz, but SwiftUI
-    // must not rebuild every tab, chart and control at that rate.  SceneKit
-    // consumes every frame through robotRenderChannel; dashboard controls are
-    // committed at 10 Hz, which also makes 600 chart samples a full minute.
+    // The board sends a complete robot snapshot 10 times a second. SceneKit
+    // takes every one through robotRenderChannel; dashboard controls commit
+    // at most every 80 ms, so jitter never halves the 10 Hz UI rate.
     private var lastUICommitUptime = 0.0
-    private let uiCommitInterval = 0.10
+    private let uiCommitInterval = 0.08
     private var lastChartSampleUptime: UInt32 = 0
 
     override init() {
@@ -1205,9 +1204,7 @@ final class AuraConnection: NSObject, ObservableObject {
                 imuIdentity: data[19],
                 servoConsumedMilliampHours: pendingPower.servoConsumedMilliampHours)
             pendingPower = nextPower
-            // INA226 is received at 50 Hz, while the chart only needs a
-            // stable 10 Hz history.  This avoids rebuilding a 3,000-point
-            // SwiftUI path on every incoming control cycle.
+            // At most one current-chart point per 100 ms of board time.
             if lastChartSampleUptime == 0 ||
                nextPower.uptimeMilliseconds &- lastChartSampleUptime >= 100 {
                 pendingChartPoint = CurrentPoint(time: Date(), amperes: nextPower.current)
