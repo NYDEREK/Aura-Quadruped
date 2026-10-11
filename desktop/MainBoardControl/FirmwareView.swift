@@ -176,6 +176,26 @@ private struct BoardHealthPanel: View {
                     ValueRow(label: "Gait tick (budget 20 ms)", value: "\(health.gaitTickMaxMs) ms",
                              tint: health.gaitTickMaxMs > 20 ? Theme.red : health.gaitTickMaxMs > 14 ? Theme.orange : Theme.text)
                 }
+                if health.cpuAvailable {
+                    ValueRow(label: "CPU 0 / 1 (\(health.cpuMHz) MHz)",
+                             value: "\(health.coreLoad[0]) / \(health.coreLoad[1]) %",
+                             tint: health.coreLoad.max() ?? 0 >= AuraHealth.busyCorePercent ? Theme.red : Theme.text)
+                    ValueRow(label: "Gait CPU per tick",
+                             value: String(format: "%.1f ms · %d Hz", Double(health.gaitTickCPUus) / 1000,
+                                           health.gaitTicksPerSecond),
+                             tint: health.gaitTickCPUus > 14_000 ? Theme.orange : Theme.text)
+                    ValueRow(label: "Busiest", value: health.busiestText)
+                        .help(health.busiestTasks.map { "\($0.name): \($0.percent)% of a core, " +
+                            ($0.core.map { "pinned to core \($0)" } ?? "either core") }.joined(separator: "\n"))
+                }
+                if health.crash.received {
+                    let crash = health.crash
+                    ValueRow(label: "Last crash",
+                             value: !crash.supported ? "not recorded" : crash.present ? crash.summary : "none",
+                             tint: crash.present && crash.thisBoot ? Theme.red : Theme.text)
+                        .help(crash.present ? crash.summary + "\nBacktrace: " + crash.backtraceText : "")
+                        .textSelection(.enabled)
+                }
                 if health.timingAvailable {
                     ValueRow(label: "Tick parts", value: zip(AuraHealth.sections, health.sectionMs)
                         .map { "\($0) \(String(format: "%.1f", $1))" }.joined(separator: " · "))

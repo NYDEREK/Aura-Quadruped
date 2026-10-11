@@ -25,6 +25,7 @@
 #include "servo_bus.h"
 #include "state_estimator_service.h"
 #include "aura_health.h"
+#include "aura_crash.h"
 #include "status_led.h"
 #include "tof.h"
 #include "ws2812.h"
@@ -389,7 +390,14 @@ static void console_task(void *argument)
     char line[LINE_SIZE];
     size_t used = 0;
     bool overflow = false;
+    TickType_t last_status = xTaskGetTickCount();
     while (true) {
+        // The 1 Hz status block (~1.5 KB at 115200 baud) waits on the UART
+        // here, not in the IMU loop, which it used to stall for ~100 ms.
+        if (xTaskGetTickCount() - last_status >= pdMS_TO_TICKS(1000)) {
+            last_status = xTaskGetTickCount();
+            print_status();
+        }
         int count = uart_read_bytes(CONSOLE_UART, buffer, sizeof(buffer), pdMS_TO_TICKS(100));
         for (int i = 0; i < count; ++i) {
             uint8_t byte = buffer[i];
@@ -422,7 +430,6 @@ static void telemetry_task(void *argument)
 {
     (void)argument;
     TickType_t wake = xTaskGetTickCount();
-    unsigned report_divider = 0;
     while (true) {
         aura_health_beat(AURA_TASK_SENSORS);
         // Keep polling after a transient I2C error. The next coherent sample
@@ -432,10 +439,6 @@ static void telemetry_task(void *argument)
         const esp_err_t result = mpu6050_read(&sample);
         app_state_set_imu_sample(result, &sample);
         if (result == ESP_OK) estimator_service_add_imu(&sample);
-        if (++report_divider >= 100) {
-            print_status();
-            report_divider = 0;
-        }
         // MPU6050 DATA_RDY is configured at 100 Hz. A 10 ms owner task
         // keeps the observer fresh without letting the 50 Hz gait task touch
         // the shared I2C bus.
@@ -505,6 +508,7 @@ static void vin_radio_guard_task(void *argument)
 void app_main(void)
 {
     ESP_ERROR_CHECK(app_state_init());
+    aura_crash_init();
 
     // Configure the fitted LED first. HIGH means on per the schematic.
     ESP_ERROR_CHECK(gpio_set_level(BOARD_LED, 0));

@@ -205,6 +205,8 @@ final class SessionLogger: ObservableObject {
     private var lastPosture = ""
     private var lastSlowTickEvent = -10.0
     private var lastLowHeapEvent = -10.0
+    private var lastBusyCPUEvent = -10.0
+    private var reportedCrash = false
 
     private var cachedTrace: (id: UUID, trace: AuraSessionTrace?)?
 
@@ -246,6 +248,8 @@ final class SessionLogger: ObservableObject {
             lastPosture = ""
             lastSlowTickEvent = -10
             lastLowHeapEvent = -10
+            lastBusyCPUEvent = -10
+            reportedCrash = false
             lastFrameTime = nil
             lastModePosition = nil
             previous = nil
@@ -363,7 +367,24 @@ final class SessionLogger: ObservableObject {
             events.append(AuraSessionEvent(t: t, kind: "gait tick slow",
                                            detail: "\(health.gaitTickMaxMs) ms" +
                                                (health.timingAvailable ? String(format: " · %@ %.1f ms", slowest.name, slowest.ms) : "") +
+                                               (health.cpuAvailable ? String(format: " · CPU %.1f ms/tick", Double(health.gaitTickCPUus) / 1000) : "") +
                                                " · mode \(mode)"))
+        }
+        // A core with no idle time starves its idle task; 5 s of that is a
+        // task-watchdog reset.
+        if health.cpuAvailable && (health.coreLoad.max() ?? 0) >= AuraHealth.busyCorePercent && t - lastBusyCPUEvent > 5 {
+            lastBusyCPUEvent = t
+            events.append(AuraSessionEvent(t: t, kind: "CPU busy", detail: String(
+                format: "core 0 %d%% · core 1 %d%% · gait %.1f ms/tick at %d Hz · %@ · mode %d",
+                health.coreLoad[0], health.coreLoad[1], Double(health.gaitTickCPUus) / 1000,
+                health.gaitTicksPerSecond, health.busiestText, mode)))
+        }
+        // The core dump of the crash that caused this start, decoded later
+        // against the build's ELF (addr2line).
+        if health.crash.present && health.crash.thisBoot && !reportedCrash {
+            reportedCrash = true
+            events.append(AuraSessionEvent(t: t, kind: "crash report",
+                                           detail: health.crash.summary + " · backtrace " + health.crash.backtraceText))
         }
         if health.timingAvailable && health.heapFree > 0 && health.heapFree < AuraHealth.lowHeapBytes && t - lastLowHeapEvent > 5 {
             lastLowHeapEvent = t

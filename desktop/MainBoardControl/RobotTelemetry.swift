@@ -118,6 +118,49 @@ struct AuraHealth: Equatable {
     var resetAbnormal: Bool { [4, 5, 6, 7, 9, 14, 15].contains(resetReason) }
     func stalled(_ task: Int) -> Bool { rates.indices.contains(task) && rates[task] == 0 }
     var stalledTasks: [String] { Self.tasks.indices.filter(stalled).map { Self.tasks[$0] } }
+
+    // Frames 0x36/0x37: CPU load over the last second and the busiest tasks.
+    struct CPUTask: Equatable {
+        var name: String
+        var percent: Int        // of one core
+        var core: Int?          // pinned core, nil = either
+    }
+    var cpuAvailable = false
+    var coreLoad = [0, 0]       // percent per core
+    var gaitTickCPUus = 0       // CPU time the gait task used per tick
+    var gaitTicksPerSecond = 0
+    var cpuMHz = 0
+    var busiestTasks: [CPUTask] = []
+    static let busyCorePercent = 90
+    var busiestText: String {
+        busiestTasks.map { "\($0.name) \($0.percent)%" }.joined(separator: " · ")
+    }
+
+    // Frame 0x38: the crash the board stored last (core dump summary).
+    var crash = AuraCrashReport()
+}
+
+struct AuraCrashReport: Equatable {
+    var received = false        // the firmware sent its crash record
+    var supported = false       // core dumps to flash are built in
+    var present = false
+    var thisBoot = false        // this start followed that crash
+    var corrupted = false
+    var resetReason = 0
+    var task = ""
+    var pc: UInt32 = 0, cause: UInt32 = 0, address: UInt32 = 0
+    var backtrace: [UInt32] = []
+    var elf = ""
+    var reason = ""
+
+    static func hex(_ value: UInt32) -> String { String(format: "0x%08x", value) }
+    var backtraceText: String { backtrace.map(Self.hex).joined(separator: " ") }
+    var summary: String {
+        var parts = [task.isEmpty ? "?" : task, "PC \(Self.hex(pc))"]
+        if !reason.isEmpty { parts.append(reason) }
+        if !elf.isEmpty { parts.append("ELF \(elf)") }
+        return parts.joined(separator: " · ")
+    }
 }
 
 struct AuraEstimate: Equatable {

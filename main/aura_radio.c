@@ -21,6 +21,8 @@
 #include "aura_features.h"
 #include "aura_network.h"
 #include "aura_health.h"
+#include "aura_crash.h"
+#include "esp_rom_sys.h"
 #include "esp_system.h"
 #include "dualsense.h"
 #include "mpu6050.h"
@@ -139,6 +141,12 @@ enum {
     AURA_EVT_HEALTH = 0x33,
     AURA_EVT_HEALTH_STACK = 0x34,
     AURA_EVT_HEALTH_TIMING = 0x35,
+    // CPU load per core and gait CPU time per tick (once a second).
+    AURA_EVT_HEALTH_CPU = 0x36,
+    // One of the busiest tasks over the last second, one frame per task.
+    AURA_EVT_HEALTH_CPU_TASK = 0x37,
+    // The stored crash record, split into numbered parts (every 5 s).
+    AURA_EVT_CRASH = 0x38,
 };
 
 typedef struct {
@@ -575,6 +583,69 @@ static void make_health_timing_frame(uint8_t frame[AURA_FRAME_SIZE])
     }
     put_u32(frame + 12, (uint32_t)esp_get_free_heap_size());
     put_u32(frame + 16, (uint32_t)esp_get_minimum_free_heap_size());
+}
+
+// [1] flags (1 = measured), [2] core 0 load %, [3] core 1 load %,
+// [4..5] gait task CPU time per tick in us, [6..7] gait ticks per second,
+// [8..9] CPU clock in MHz.
+static void make_health_cpu_frame(uint8_t frame[AURA_FRAME_SIZE], const aura_cpu_stats_t *cpu)
+{
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_HEALTH_CPU;
+    frame[1] = cpu->valid ? 1 : 0;
+    frame[2] = cpu->core_load_percent[0];
+    frame[3] = cpu->core_load_percent[1];
+    put_u16(frame + 4, cpu->gait_tick_cpu_us);
+    put_u16(frame + 6, cpu->gait_ticks_per_s);
+    put_u16(frame + 8, (uint16_t)esp_rom_get_cpu_ticks_per_us());
+}
+
+// [1] rank, [2] % of one core, [3] pinned core (0xff = either),
+// [4..19] task name.
+static void make_health_cpu_task_frame(uint8_t frame[AURA_FRAME_SIZE], int rank,
+                                       const aura_cpu_task_t *task)
+{
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_HEALTH_CPU_TASK;
+    frame[1] = (uint8_t)rank;
+    frame[2] = task->percent;
+    frame[3] = task->core < 0 ? 0xff : (uint8_t)task->core;
+    memcpy(frame + 4, task->name, 16);
+}
+
+// Part 0: [2] flags (1 supported, 2 stored, 4 this boot followed a crash,
+// 8 backtrace corrupted), [3] reset reason, [4..7] PC, [8..11] exception
+// cause, [12..15] fault address, [16] backtrace depth, [17] part count.
+// Part 1: [2..17] task. Part 2: [2..9] ELF SHA-256 prefix. Parts 3..6:
+// [2..17] four backtrace PCs each. Parts 7..10: [2..17] reason text.
+#define AURA_CRASH_PARTS 11
+static int make_crash_frame(uint8_t frame[AURA_FRAME_SIZE], int part)
+{
+    const aura_crash_t *crash = aura_crash_get();
+    const int parts = crash->present ? AURA_CRASH_PARTS : 1;
+    if (part >= parts) return parts;
+    memset(frame, 0, AURA_FRAME_SIZE);
+    frame[0] = AURA_EVT_CRASH;
+    frame[1] = (uint8_t)part;
+    if (part == 0) {
+        frame[2] = (crash->supported ? 1 : 0) | (crash->present ? 2 : 0) |
+                   (crash->this_boot ? 4 : 0) | (crash->corrupted ? 8 : 0);
+        frame[3] = crash->reset_reason;
+        put_u32(frame + 4, crash->pc);
+        put_u32(frame + 8, crash->cause);
+        put_u32(frame + 12, crash->vaddr);
+        frame[16] = crash->depth;
+        frame[17] = (uint8_t)parts;
+    } else if (part == 1) {
+        memcpy(frame + 2, crash->task, 16);
+    } else if (part == 2) {
+        memcpy(frame + 2, crash->elf, 8);
+    } else if (part <= 6) {
+        for (int i = 0; i < 4; ++i) put_u32(frame + 2 + i * 4, crash->backtrace[(part - 3) * 4 + i]);
+    } else {
+        memcpy(frame + 2, crash->reason + (part - 7) * 16, 16);
+    }
+    return parts;
 }
 
 static void make_robot_body_reference_frame(uint8_t frame[AURA_FRAME_SIZE])
@@ -1330,6 +1401,14 @@ static void telemetry_task(void *argument)
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
             }
             if (tick % AURA_TELEMETRY_HZ == 0) {      // once a second
+                aura_cpu_stats_t cpu;
+                aura_health_sample_cpu(&cpu);
+                make_health_cpu_frame(frame, &cpu);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+                for (int rank = 0; rank < cpu.top_count; ++rank) {
+                    make_health_cpu_task_frame(frame, rank, &cpu.top[rank]);
+                    aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+                }
                 make_tof_diagnostics_frame(frame);
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
                 send_dualsense_status();
@@ -1340,6 +1419,16 @@ static void telemetry_task(void *argument)
                 dualsense_get_snapshot(&controller);
                 if (controller.state == DUALSENSE_STATE_SCANNING)
                     send_dualsense_devices();
+            }
+            // Every 5 s, half a second after the once-a-second frames, so
+            // each cycle still fits one write.
+            if (tick % (5 * AURA_TELEMETRY_HZ) == AURA_TELEMETRY_HZ / 2) {
+                const int parts = make_crash_frame(frame, 0);
+                aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+                for (int part = 1; part < parts; ++part) {
+                    make_crash_frame(frame, part);
+                    aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
+                }
             }
             aura_network_batch_send(&telemetry_batch);
             ++tick;

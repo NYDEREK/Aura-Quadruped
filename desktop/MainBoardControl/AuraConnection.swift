@@ -424,6 +424,10 @@ final class AuraConnection: NSObject, ObservableObject {
     private var pendingFootContacts = AuraFootContacts()
     private var pendingHealth = AuraHealth()
     private var healthReference: (time: Double, beats: [Int])?
+    private var crashParts = AuraCrashReport()
+    private var crashPartCount = 0
+    private var crashPartsSeen = Set<Int>()
+    private var cpuTasksBuffer: [AuraHealth.CPUTask] = []
     @Published private(set) var health = AuraHealth()
     // Silence watchdog: a link that stays "connected" without data (Aura
     // restarted or Wi-Fi dropped) is closed and opened again.
@@ -1256,6 +1260,41 @@ final class AuraConnection: NSObject, ObservableObject {
         healthReference = (now, beats)
     }
 
+    // Frame 0x38 arrives as numbered parts every 5 s; the report is
+    // published once part 0 and all the parts it announces are in.
+    private func applyCrashFrame(_ data: Data) {
+        let part = Int(data[1])
+        if part == 0 {
+            let flags = data[2]
+            crashParts = AuraCrashReport(
+                received: true, supported: flags & 1 != 0, present: flags & 2 != 0,
+                thisBoot: flags & 4 != 0, corrupted: flags & 8 != 0, resetReason: Int(data[3]),
+                pc: u32(data, 4), cause: u32(data, 8), address: u32(data, 12),
+                backtrace: [UInt32](repeating: 0, count: min(Int(data[16]), 16)))
+            crashPartCount = max(1, Int(data[17]))
+            crashPartsSeen = [0]
+        } else {
+            guard crashParts.received, part < crashPartCount else { return }
+            let text = { (range: Range<Int>) -> String in
+                String(decoding: data[range].prefix { $0 != 0 }, as: UTF8.self)
+            }
+            switch part {
+            case 1: crashParts.task = text(2..<18)
+            case 2: crashParts.elf = text(2..<10)
+            case 3...6:
+                for i in 0..<4 {
+                    let index = (part - 3) * 4 + i
+                    if index < crashParts.backtrace.count { crashParts.backtrace[index] = u32(data, 2 + i * 4) }
+                }
+            default: crashParts.reason += text(2..<18)
+            }
+            crashPartsSeen.insert(part)
+        }
+        if crashPartsSeen.count == crashPartCount && pendingHealth.crash != crashParts {
+            pendingHealth.crash = crashParts
+        }
+    }
+
     private func parseTelemetry(_ data: Data) {
         guard data.count == 20 else { return }
         lastTelemetryUptime = ProcessInfo.processInfo.systemUptime
@@ -1381,6 +1420,23 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingHealth.sectionMs = (0..<AuraHealth.sections.count).map { Double(u16(data, 2 + $0 * 2)) / 10 }
             pendingHealth.heapFree = Int(u32(data, 12))
             pendingHealth.heapMinimum = Int(u32(data, 16))
+        } else if data[0] == 0x36 {
+            pendingHealth.cpuAvailable = data[1] & 1 != 0
+            pendingHealth.coreLoad = [Int(data[2]), Int(data[3])]
+            pendingHealth.gaitTickCPUus = Int(u16(data, 4))
+            pendingHealth.gaitTicksPerSecond = Int(u16(data, 6))
+            pendingHealth.cpuMHz = Int(u16(data, 8))
+        } else if data[0] == 0x37 {
+            let rank = Int(data[1])
+            let task = AuraHealth.CPUTask(
+                name: String(decoding: data[4..<20].prefix { $0 != 0 }, as: UTF8.self),
+                percent: Int(data[2]), core: data[3] == 0xff ? nil : Int(data[3]))
+            if rank == 0 { cpuTasksBuffer = [] }
+            guard rank == cpuTasksBuffer.count else { return }
+            cpuTasksBuffer.append(task)
+            pendingHealth.busiestTasks = cpuTasksBuffer
+        } else if data[0] == 0x38 {
+            applyCrashFrame(data)
         } else if data[0] == 0x34 {
             pendingHealth.stackAvailable = true
             pendingHealth.gaitTickMaxMs = Int(data[1])

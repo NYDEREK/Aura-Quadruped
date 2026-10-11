@@ -1,4 +1,5 @@
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 
 // Liveness counters: each long-running task counts its own loop passes. The
@@ -37,3 +38,23 @@ typedef enum {
 void aura_health_gait_section_us(aura_gait_section_t section, uint32_t us);
 // Longest time of each section since the last take, microseconds.
 void aura_health_take_gait_sections_us(uint32_t out[AURA_GAIT_SECTION_COUNT]);
+
+// CPU use since the previous sample, from FreeRTOS run-time counters. The
+// telemetry task samples it once a second.
+#define AURA_CPU_TOP_TASKS 4
+typedef struct {
+    char name[16];
+    uint8_t percent;        // of one core
+    int8_t core;            // pinned core, -1 = either
+} aura_cpu_task_t;
+
+typedef struct {
+    bool valid;
+    uint8_t core_load_percent[2];
+    uint16_t gait_tick_cpu_us;   // CPU time the gait task really used per tick
+    uint16_t gait_ticks_per_s;
+    uint8_t top_count;
+    aura_cpu_task_t top[AURA_CPU_TOP_TASKS];   // busiest tasks, idle excluded
+} aura_cpu_stats_t;
+
+void aura_health_sample_cpu(aura_cpu_stats_t *out);

@@ -2016,7 +2016,13 @@ static void gait_task_fn(void *unused)
             aura_health_gait_tick_us((uint32_t)(esp_timer_get_time() - started));
             aura_health_beat(AURA_TASK_GAIT);
         }
-        vTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS));
+        // Behind schedule (a tick overran 20 ms): drop the missed periods and
+        // still sleep a tick. Running back to back starved CPU 0's idle task
+        // until the task watchdog reset the board (2026-10-11, 20:24).
+        if (xTaskDelayUntil(&wake, pdMS_TO_TICKS(ROBOT_GAIT_PERIOD_MS)) == pdFALSE) {
+            vTaskDelay(1);
+            wake = xTaskGetTickCount();
+        }
     }
 }
 
