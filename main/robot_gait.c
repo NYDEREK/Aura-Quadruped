@@ -50,22 +50,12 @@
 #define ROBOT_POSE_MAX_PITCH_RAD (15.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_SLEW_RAD_S (40.0f * ROBOT_PI / 180.0f)
 #define ROBOT_POSE_ACCEL_RAD_S2 (200.0f * ROBOT_PI / 180.0f)
-// Pad mode 4: balanced trot (docs/balans-chodu.md). Its step is a copy of
-// the operator's tested mode 3 (Run) profile as saved in NVS on 2026-10-11:
-// 44 mm / 41 mm / 1.00 Hz / 52 %. A copy, not a link: editing mode 3 in the
-// app does not change mode 4. The saved Trot profile stays in NVS unused.
-#define ROBOT_TROT_STRIDE_MM 44
-#define ROBOT_TROT_LIFT_MM 41
-#define ROBOT_TROT_FREQUENCY_CENTI_HZ 100
-#define ROBOT_TROT_DUTY_PERCENT 52
-// Mode 4 starts and stops only on a tick with all four feet down. That window
-// is (duty - 50 %) of a cycle and must hold at least one 20 ms tick, or the
-// trot can miss it every half-cycle and never stop (1.25 Hz at 52 % does).
-_Static_assert((ROBOT_TROT_DUTY_PERCENT - 50) * 1000 >=
-                   ROBOT_TROT_FREQUENCY_CENTI_HZ * ROBOT_GAIT_PERIOD_MS,
-               "mode 4 four-feet-down window shorter than one gait tick");
-// With mode 3's timing the joints are driven as in mode 3 as well. (ACC 0
-// and 120 rad/s^2 belonged to the former 0.2 s swing.)
+// Pad mode 4: balanced trot (docs/balans-chodu.md). Its step is the saved
+// Trot profile (NVS, edited in the app while disarmed). Mode 4 starts and
+// stops only on a tick with all four feet down; that window is (duty - 50 %)
+// of a cycle and must hold at least one 20 ms tick, or the trot could miss it
+// every half-cycle and never stop. trot_profile_stoppable() enforces this.
+// The joints are driven as in mode 3.
 #define ROBOT_TROT_SERVO_ACCELERATION ROBOT_GAIT_ACCELERATION
 #define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 ROBOT_JOINT_MAX_ACCELERATION_RAD_S2
 #define ROBOT_TROT_COMMAND_TIME_S 0.25f
@@ -217,10 +207,6 @@ static uint8_t dpad_was = DPAD_NONE;
 static int16_t height_offset_mm;
 static joint_trajectory_t height_trajectory;
 static joint_trajectory_t pose_trajectory[2];
-static const robot_locomotion_profile_t trot_profile = {
-    .stride_mm = ROBOT_TROT_STRIDE_MM, .step_height_mm = ROBOT_TROT_LIFT_MM,
-    .frequency_centi_hz = ROBOT_TROT_FREQUENCY_CENTI_HZ, .duty_percent = ROBOT_TROT_DUTY_PERCENT,
-};
 static robot_walk_balance_t trot_balance;
 static robot_planar_point_t trot_learned_com;
 static float trot_command[3];        // low-passed forward, lateral, turn
@@ -407,7 +393,6 @@ static const robot_locomotion_profile_t *gait_profile(robot_gait_mode_t gait)
 {
     if (gait == ROBOT_GAIT_TRIPOD) return &tripod_walk_profile;
     // Trot is reachable only from pad mode 4.
-    if (gait == ROBOT_GAIT_TROT) return &trot_profile;
     if (gait < ROBOT_GAIT_TROT || gait > ROBOT_GAIT_CLIMB)
         return NULL;
     return &gait_profiles[gait];
@@ -1541,9 +1526,16 @@ static void publish_estimator_legs(const robot_model_t *feedback, bool armed, bo
     estimator_service_set_legs(&legs);
 }
 
+// Mode 4's stop rule on a Trot profile (see the ROBOT_TROT_* notes above).
+static bool trot_profile_stoppable(const robot_locomotion_profile_t *profile)
+{
+    return profile && profile->duty_percent > 50 &&
+           (profile->duty_percent - 50) * 1000 >= profile->frequency_centi_hz * ROBOT_GAIT_PERIOD_MS;
+}
+
 static bool trot_four_feet_down(float global_phase)
 {
-    const float duty = robot_locomotion_duty_factor(&trot_profile);
+    const float duty = robot_locomotion_duty_factor(gait_profile(ROBOT_GAIT_TROT));
     float other = global_phase + 0.5f;
     other -= floorf(other);
     return global_phase < duty && other < duty;
@@ -1594,7 +1586,7 @@ static void apply_trot_balance(robot_vec3_t world_feet[ROBOT_LEG_COUNT],
         capture.x += xi.x;
         capture.z += xi.z;
     }
-    const float duty = robot_locomotion_duty_factor(&trot_profile);
+    const float duty = robot_locomotion_duty_factor(gait_profile(ROBOT_GAIT_TROT));
     for (int leg = 0; leg < ROBOT_LEG_COUNT; ++leg) {
         const bool leg_swing = walking && swing[leg];
         if (trot_was_swing[leg] && !leg_swing) {
@@ -1698,7 +1690,8 @@ static void gait_tick(void)
                trot_four_feet_down(phase)) {
         trot_walking = false;
     } else if (!trot_walking && trot_mode && armed && !jumping && magnitude > 0.02f &&
-               !attitude_control.reference_pending && !tripod_test_is_active()) {
+               !attitude_control.reference_pending && !tripod_test_is_active() &&
+               trot_profile_stoppable(gait_profile(ROBOT_GAIT_TROT))) {
         trot_walking = true;
         phase = 0.5f;
     }
@@ -2255,7 +2248,8 @@ esp_err_t robot_gait_set_locomotion_profile(robot_gait_mode_t gait,
                                             const robot_locomotion_profile_t *profile)
 {
     if (!gait_mutex || gait < ROBOT_GAIT_TROT || gait > ROBOT_GAIT_TRIPOD ||
-        !robot_locomotion_profile_valid((uint8_t)gait, profile))
+        !robot_locomotion_profile_valid((uint8_t)gait, profile) ||
+        (gait == ROBOT_GAIT_TROT && !trot_profile_stoppable(profile)))
         return ESP_ERR_INVALID_ARG;
     // Profile changes are planning data. The current profile must remain
     // invariant for an armed step, otherwise a normal UI edit could alter a

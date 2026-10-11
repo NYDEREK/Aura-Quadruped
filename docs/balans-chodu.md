@@ -40,7 +40,7 @@ lądująca wcześniej go łapie. Dlatego **tryb 3 zostaje bez zmian**.
 
 | Element | Działanie |
 |---|---|
-| Profil | od 11.10 kopia sprawdzonego trybu 3: 44 mm / 41 mm / 1,0 Hz / 52 %, przyspieszenia serw jak w trybie 3 (stałe w firmware; wcześniej 40 mm / 30 mm / 1,5 Hz / 70 %, ACC 0; zapisany profil Trot w NVS nie jest używany) |
+| Profil | zapisany profil Trot z NVS, edytowalny w aplikacji po rozbrojeniu (11.10: 60 mm / 54 mm / 1,25 Hz / 58 %); przyspieszenia serw jak w trybie 3. Warunek: kontakt > 50 % i (kontakt − 50) × 1000 ≥ częstotliwość [cHz] × 20, inaczej tryb 4 nie umiałby się zatrzymać na czterech stopach — firmware odrzuca taki profil i nie startuje truchtu |
 | Znak IMU | jeden, ten sam co w regulatorze postawy — dla nogi w powietrzu i dla capture point |
 | Postawa w ruchu | korekcja IMU zamrożona na czas truchtu (na linii dwóch stóp nie da się jej wykonać, a jej przechył to sygnał upadku) |
 | Stawianie stóp | stopa ląduje w średnim przesunięciu postawionych stóp + `ξ = h·przechył + √(h/g)·h·prędkość przechyłu`, limit ±40 mm, cel zamrożony po 85 % przenoszenia |
