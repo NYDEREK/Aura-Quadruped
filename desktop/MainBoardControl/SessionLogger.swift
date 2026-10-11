@@ -202,6 +202,7 @@ final class SessionLogger: ObservableObject {
     private var previous: (armed: Bool, mode: Int, moving: Bool, fault: Bool, pad: Bool, earlyMask: UInt8,
                            stalled: Set<String>)?
     private var reportedLowStack: Set<String> = []
+    private var lastPosture = ""
     private var lastSlowTickEvent = -10.0
 
     private var cachedTrace: (id: UUID, trace: AuraSessionTrace?)?
@@ -241,6 +242,7 @@ final class SessionLogger: ObservableObject {
             modeStats = [:]
             events = []
             reportedLowStack = []
+            lastPosture = ""
             lastSlowTickEvent = -10
             lastFrameTime = nil
             lastModePosition = nil
@@ -257,6 +259,7 @@ final class SessionLogger: ObservableObject {
         accumulateMode(dt: frameDt, state: state, attitude: attitude, imu: imu, contacts: contacts,
                        legs: legs, power: power, route: route, moving: moving)
         recordEvents(t: t, state: state, moving: moving, contacts: contacts, health: health)
+        recordPosture(t: t, state: state, attitude: attitude)
         if state.armed || state.safetyFault.latched {
             appendTrace(t: t, state: state, attitude: attitude, imu: imu, contacts: contacts,
                         legs: legs, power: power, moving: moving)
@@ -383,6 +386,20 @@ final class SessionLogger: ObservableObject {
         if state.controllerConnected != previous.pad {
             events.append(AuraSessionEvent(t: t, kind: state.controllerConnected ? "pad connected" : "pad lost"))
         }
+    }
+
+    // The IMU posture loop runs only when the sample is fresh, the loop is
+    // enabled and a level reference was captured after arming. Each change of
+    // those flags is logged, so a loop that never engages shows why.
+    private func recordPosture(t: Double, state: AuraRobotState, attitude: AuraAttitude) {
+        guard state.armed else { lastPosture = ""; return }
+        let flags = [("IMU fresh", attitude.valid), ("enabled", attitude.enabled),
+                     ("reference", attitude.referenceCaptured), ("capturing", attitude.referencePending),
+                     ("active", attitude.active)]
+        let text = flags.map { "\($0.0) \($0.1 ? "yes" : "no")" }.joined(separator: " · ")
+        guard text != lastPosture else { return }
+        lastPosture = text
+        events.append(AuraSessionEvent(t: t, kind: "posture", detail: text + " · mode \(state.selectedGait)"))
     }
 
     private func accumulateMode(dt: Double, state: AuraRobotState, attitude: AuraAttitude, imu: AuraIMU,
