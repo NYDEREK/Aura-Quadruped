@@ -1,5 +1,4 @@
 import AppKit
-import Charts
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -39,36 +38,80 @@ struct TimeChart: View {
                 Text(unit).font(Theme.label).foregroundStyle(Theme.faint)
             }
         }) {
-            Chart {
-                ForEach(series.indices, id: \.self) { k in
-                    ForEach(times.indices, id: \.self) { i in
-                        LineMark(x: .value("t", times[i]), y: .value(series[k].name, lines[k][i]),
-                                 series: .value("series", series[k].name))
-                            .foregroundStyle(series[k].color)
-                            .lineStyle(StrokeStyle(lineWidth: 1.5))
-                    }
+            LineCanvas(times: times, lines: lines, colors: series.map(\.color))
+                .frame(height: height)
+                .overlay {
+                    if samples.isEmpty { Text("No data").font(Theme.label).foregroundStyle(Theme.faint) }
                 }
+        }
+    }
+}
+
+// Line chart drawn straight into a Canvas: grid, axis labels and one path
+// per series. Swift Charts cost a few percent of CPU per chart at 4 Hz; this
+// costs next to nothing for the same picture.
+struct LineCanvas: View {
+    let times: [Double]          // s, negative = before now
+    let lines: [[Double]]
+    let colors: [Color]
+
+    private static func label(_ value: Double, span: Double) -> String {
+        let format = span < 0.02 ? "%.4f" : span < 0.2 ? "%.3f" : span < 2 ? "%.2f" : span < 20 ? "%.1f" : "%.0f"
+        return String(format: format, value)
+    }
+
+    private static func timeStep(_ span: Double) -> Double {
+        [1.0, 2, 5, 10, 15, 30, 60, 120, 300].first { span / $0 <= 6 } ?? 600
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let values = lines.flatMap { $0 }.filter(\.isFinite)
+            guard times.count > 1, var low = values.min(), var high = values.max() else { return }
+            if high - low < 1e-6 { low -= 0.5; high += 0.5 }
+            let pad = (high - low) * 0.08
+            low -= pad; high += pad
+            let start = times.first ?? -1, end = times.last ?? 0
+            let span = max(1e-6, end - start)
+            let rows = (0...3).map { low + (high - low) * Double($0) / 3 }
+            let labels = rows.map { Self.label($0, span: high - low) }
+            // Room for the widest value label, so none is cut at the edge.
+            let labelWidth = labels.map { context.resolve(Text($0).font(Theme.label)).measure(in: size).width }.max() ?? 30
+            let plot = CGRect(x: labelWidth + 8, y: 4,
+                              width: max(1, size.width - labelWidth - 22), height: max(1, size.height - 22))
+            func x(_ t: Double) -> CGFloat { plot.minX + CGFloat((t - start) / span) * plot.width }
+            func y(_ v: Double) -> CGFloat { plot.maxY - CGFloat((v - low) / (high - low)) * plot.height }
+
+            var grid = Path()
+            for (value, label) in zip(rows, labels) {
+                let row = y(value)
+                grid.move(to: CGPoint(x: plot.minX, y: row))
+                grid.addLine(to: CGPoint(x: plot.maxX, y: row))
+                context.draw(Text(label).font(Theme.label).foregroundColor(Theme.muted),
+                             at: CGPoint(x: plot.minX - 6, y: row), anchor: .trailing)
             }
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 6)) { value in
-                    AxisGridLine().foregroundStyle(Theme.line)
-                    AxisValueLabel {
-                        if let t = value.as(Double.self) { Text(String(format: "%.0f s", t)) }
-                    }
-                    .font(Theme.label).foregroundStyle(Theme.muted)
+            let step = Self.timeStep(span)
+            var tick = (end / step).rounded(.down) * step
+            while tick >= start {
+                let column = x(tick)
+                grid.move(to: CGPoint(x: column, y: plot.minY))
+                grid.addLine(to: CGPoint(x: column, y: plot.maxY))
+                context.draw(Text(String(format: "%.0f s", tick)).font(Theme.label).foregroundColor(Theme.muted),
+                             at: CGPoint(x: column, y: plot.maxY + 4), anchor: .top)
+                tick -= step
+            }
+            context.stroke(grid, with: .color(Theme.line), lineWidth: 0.5)
+
+            for (index, line) in lines.enumerated() where line.count == times.count {
+                var path = Path()
+                var drawing = false
+                for i in times.indices {
+                    guard line[i].isFinite else { drawing = false; continue }
+                    let point = CGPoint(x: x(times[i]), y: y(line[i]))
+                    if drawing { path.addLine(to: point) } else { path.move(to: point); drawing = true }
                 }
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                    AxisGridLine().foregroundStyle(Theme.line)
-                    AxisValueLabel().font(Theme.label).foregroundStyle(Theme.muted)
-                }
-            }
-            .chartYScale(domain: .automatic(includesZero: false))
-            .chartLegend(.hidden)
-            .frame(height: height)
-            .overlay {
-                if samples.isEmpty { Text("No data").font(Theme.label).foregroundStyle(Theme.faint) }
+                context.stroke(path, with: .color(colors.indices.contains(index) ? colors[index] : Theme.text),
+                               style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
             }
         }
     }
@@ -200,9 +243,10 @@ struct ChartsView: View {
     }
 }
 
+// The page follows the connection only; its charts follow the history in
+// their own view, so the page is not laid out again for every chart update.
 struct OverviewView: View {
     @EnvironmentObject var aura: AuraConnection
-    @EnvironmentObject var history: TelemetryHistory
 
     private var batteryPercent: Double {
         min(100, max(0, (aura.power.servoBusVoltage - 10.0) / 2.6 * 100))
@@ -215,7 +259,7 @@ struct OverviewView: View {
         let maxTemperature = temperatures.max() ?? 0
         let voltage = aura.power.servoBusVoltage
         Page {
-            if !aura.isConnected && history.count == 0 {
+            if !aura.isConnected && aura.history.count == 0 {
                 Placeholder(text: "Not connected to Aura").frame(height: 300)
             } else {
                 if state.safetyFault.latched {

@@ -56,7 +56,6 @@ private struct IMUCharts: View {
 
 struct IMUView: View {
     @EnvironmentObject var aura: AuraConnection
-    @EnvironmentObject var history: TelemetryHistory
 
     var body: some View {
         let attitude = aura.attitude
@@ -832,11 +831,35 @@ final class AuraAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// The window's long-lived models. Nothing here is published, so the window
+// root never redraws on telemetry: each page observes only the models it
+// shows, and a 10 Hz update redraws that page instead of the whole window.
+@MainActor
+private final class AuraModels: ObservableObject {
+    let aura = AuraConnection()
+    let robot = RobotControlStore()
+    let calibration = CalibrationStore()
+}
+
+// Keeps the Mac's calibration backup in step with what Aura reports, as the
+// root used to; in its own view so the root need not observe the connection.
+private struct AxisBackupSync: View {
+    @EnvironmentObject var aura: AuraConnection
+    @EnvironmentObject var robot: RobotControlStore
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: aura.robotAxisBackup) { _, records in
+                robot.applyAuraConfigurations(records)
+            }
+    }
+}
+
 struct ContentView: View {
-    @StateObject private var aura = AuraConnection()
-    @StateObject private var robot = RobotControlStore()
-    @StateObject private var calibration = CalibrationStore()
+    @StateObject private var models = AuraModels()
     @StateObject private var navigation = AuraNavigationStore()
+    private var aura: AuraConnection { models.aura }
 
     @ViewBuilder
     private var content: some View {
@@ -879,15 +902,13 @@ struct ContentView: View {
         .tint(Theme.accent2)
         .buttonStyle(AuraButtonStyle())
         .groupBoxStyle(AuraGroupBoxStyle())
+        .background(AxisBackupSync())
         .environmentObject(aura)
         .environmentObject(aura.history)
         .environmentObject(aura.route)
         .environmentObject(aura.sessions)
-        .environmentObject(robot)
-        .environmentObject(calibration)
-        .onChange(of: aura.robotAxisBackup) { _, records in
-            robot.applyAuraConfigurations(records)
-        }
+        .environmentObject(models.robot)
+        .environmentObject(models.calibration)
         .onReceive(NotificationCenter.default.publisher(for: AuraAppDelegate.openSession)) { note in
             guard let url = note.object as? URL else { return }
             aura.sessions.open(url)

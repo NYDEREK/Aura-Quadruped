@@ -418,11 +418,12 @@ final class AuraConnection: NSObject, ObservableObject {
     private var pendingToFSensors = [AuraToFSensor(id: 0, address: 0x30), AuraToFSensor(id: 1, address: 0x31)]
     private var pendingDualSense = AuraDualSense()
     private var pendingChartPoint: CurrentPoint?
-    // The board sends a complete robot snapshot 10 times a second. SceneKit
-    // takes every one through robotRenderChannel; dashboard controls commit
-    // at most every 80 ms, so jitter never halves the 10 Hz UI rate.
+    // The board sends a complete robot snapshot 10 times a second. SceneKit,
+    // the route, the history and the session log take every one; the SwiftUI
+    // pages (numbers, tables) are refreshed 5 times a second, which reads the
+    // same and halves the layout work.
     private var lastUICommitUptime = 0.0
-    private let uiCommitInterval = 0.08
+    private let uiCommitInterval = 0.18
     private var lastChartSampleUptime: UInt32 = 0
 
     override init() {
