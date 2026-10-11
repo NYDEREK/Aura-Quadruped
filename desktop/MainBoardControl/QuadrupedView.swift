@@ -323,7 +323,6 @@ final class QuadrupedModel: ObservableObject {
     private var previewPhase = 0.0
     // Test IK pad-mode preview only; the defaults leave every other view as it was.
     private var previewPosture = (roll: 0.0, pitch: 0.0)       // rad, firmware convention
-    private var trotProfileOverride: AuraGaitProfile?
     private var allowsSteppingInPlace = true
     private var padModeTime: TimeInterval?
     private var padModeCommand = (forward: 0.0, lateral: 0.0, turn: 0.0)
@@ -404,7 +403,6 @@ final class QuadrupedModel: ObservableObject {
     }
 
     private func locomotionProfile(for gait: QuadGait) -> AuraGaitProfile {
-        if gait == .trot, let trotProfileOverride { return trotProfileOverride }
         return locomotionProfiles.first(where: { $0.gait == gait.boardID }) ??
             AuraGaitProfile.defaults.first(where: { $0.gait == gait.boardID }) ??
             AuraGaitProfile.defaults[0]
@@ -421,7 +419,6 @@ final class QuadrupedModel: ObservableObject {
                        forward: Double, lateral: Double, turn: Double,
                        running: Bool) -> QuadrupedSnapshot {
         previewPosture = (0, 0)
-        trotProfileOverride = nil
         allowsSteppingInPlace = true
         padModeTime = nil
         return labPose(at: time, gait: gait, forward: forward, lateral: lateral, turn: turn, running: running)
@@ -430,8 +427,7 @@ final class QuadrupedModel: ObservableObject {
     // Test IK: Aura's pad modes 1–4 as robot_gait.c runs them.
     // 1 stands (the IMU levelling has no equivalent here), 2 tilts the torso
     // ±15° from the left stick at 40°/s, 3 walks the saved Run profile,
-    // 4 trots with the firmware's fixed copy of the mode 3 step and a 0.25 s
-    // stick filter.
+    // 4 trots with the saved Trot profile and a 0.25 s stick filter.
     func ikLabPadSnapshot(at time: TimeInterval, mode: Int,
                           forward: Double, lateral: Double, turn: Double) -> QuadrupedSnapshot {
         let dt = min(0.05, max(0, time - (padModeTime ?? time)))
@@ -449,7 +445,6 @@ final class QuadrupedModel: ObservableObject {
         } else {
             padModeCommand = (0, 0, 0)
         }
-        trotProfileOverride = mode == 4 ? AuraGaitProfile.firmwareTrot : nil
         allowsSteppingInPlace = false
         let gait: QuadGait = mode == 3 ? .run : mode == 4 ? .trot : .stand
         let drive = mode == 4 ? padModeCommand : (forward: forward, lateral: lateral, turn: turn)
@@ -630,7 +625,6 @@ final class QuadrupedModel: ObservableObject {
     // Test IK probe: Aura standing, one leg moved to the probe's joint angles.
     func ikLabProbeSnapshot(at time: TimeInterval, leg: QuadLeg, angles: [Double]?) -> QuadrupedSnapshot {
         previewPosture = (0, 0)
-        trotProfileOverride = nil
         padModeTime = nil
         selectedGait = .stand
         spinMode = false
@@ -2152,7 +2146,7 @@ private struct IKLabPadTab: View {
         case 1: "Stands. On Aura the IMU keeps the torso level."
         case 2: "Left stick tilts the torso, ±15° at 40°/s."
         case 3: "Run profile as saved on Aura."
-        case 4: "Mode 3 step with mode 4 balance · stick smoothed 0.25 s."
+        case 4: "Trot profile with mode 4 balance · stick smoothed 0.25 s."
         default: ""
         }
     }
@@ -2216,15 +2210,7 @@ private struct IKLabStepTab: View {
                 Text("No step in this mode.").font(Theme.label).foregroundStyle(Theme.muted)
             }
         } else if padMode == 4 {
-            let profile = AuraGaitProfile.firmwareTrot
-            Panel("Mode 4 trot", trailing: {
-                Text("fixed in firmware").font(Theme.label).foregroundStyle(Theme.faint)
-            }) {
-                ValueRow(label: "Stride", value: "\(profile.strideMm) mm")
-                ValueRow(label: "Step height", value: "\(profile.stepHeightMm) mm")
-                ValueRow(label: "Frequency", value: String(format: "%.2f Hz", profile.frequencyHz))
-                ValueRow(label: "Duty", value: "\(profile.dutyPercent)%")
-            }
+            editor(.trot)
         } else if padMode == 3 {
             editor(.run)
         } else if gait == .stand {
@@ -2241,7 +2227,6 @@ private struct IKLabStepTab: View {
         let id = gait.boardID
         let profile = aura.gaitProfile(id)
         let editable = !aura.robotState.armed
-        let singleFoot = gait.isSingleFoot || gait == .tripod
         Panel(gait.rawValue, trailing: {
             Text(aura.robotState.armed ? "armed · locked" : "shared with Aura")
                 .font(Theme.label).foregroundStyle(aura.robotState.armed ? Theme.yellow : Theme.faint)
@@ -2254,8 +2239,11 @@ private struct IKLabStepTab: View {
                 get: { aura.gaitProfile(id).frequencyHz },
                 set: { value in var changed = aura.gaitProfile(id)
                     changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
-                          range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
+                          range: 0.15...max(0.2, Double(profile.frequencyLimitCentiHz) / 100), step: 0.05,
                           text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save(id) }
+            ProfileSlider(title: "Duty", value: binding(id, \.dutyPercent),
+                          range: Double(profile.dutyRange.lowerBound)...Double(profile.dutyRange.upperBound), step: 1,
+                          text: "\(profile.dutyPercent)%", editable: editable) { save(id) }
         }
     }
 
@@ -2581,7 +2569,6 @@ private struct Robot3DGaitTab: View {
     var body: some View {
         let profile = aura.gaitProfile(model.configuredGait)
         let editable = aura.isConnected && !aura.robotState.armed
-        let singleFoot = model.configuredGait == 2 || model.configuredGait == 4 || model.configuredGait == 5
         Panel("Gait profile") {
             Picker("", selection: $model.configuredGait) {
                 ForEach(AuraGaitProfile.defaults) { Text($0.title).tag($0.gait) }
@@ -2596,9 +2583,10 @@ private struct Robot3DGaitTab: View {
                 get: { aura.gaitProfile(model.configuredGait).frequencyHz },
                 set: { value in var changed = aura.gaitProfile(model.configuredGait)
                     changed.frequencyCentiHz = Int((value * 100).rounded()); aura.replaceGaitProfileLocally(changed) }),
-                          range: 0.15...(singleFoot ? 1.2 : 3.0), step: 0.05,
+                          range: 0.15...max(0.2, Double(profile.frequencyLimitCentiHz) / 100), step: 0.05,
                           text: String(format: "%.2f Hz", profile.frequencyHz), editable: editable) { save() }
-            ProfileSlider(title: "Duty", value: binding(\.dutyPercent), range: singleFoot ? 76...90 : 45...85, step: 1,
+            ProfileSlider(title: "Duty", value: binding(\.dutyPercent),
+                          range: Double(profile.dutyRange.lowerBound)...Double(profile.dutyRange.upperBound), step: 1,
                           text: "\(profile.dutyPercent)%", editable: editable) { save() }
         }
         .help("Saved only while disarmed. Mode 4 uses its own firmware profile.")

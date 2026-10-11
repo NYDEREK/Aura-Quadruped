@@ -229,19 +229,24 @@ struct AuraGaitProfile: Equatable, Identifiable {
 
     var title: String {
         switch gait {
-        case 1: "Trot · 2 legs"
+        case 1: "Mode 4 · Trot"
         case 2: "Crawl · 1 leg"
-        case 3: "Run · fast diagonal"
+        case 3: "Mode 3 · Run"
         case 4: "Climb · 1 leg"
         case 5: "Tripod · experimental"
         default: "Unknown gait"
         }
     }
 
-    // Pad mode 4's fixed trot profile (ROBOT_TROT_* in main/robot_gait.c);
-    // the Test IK preview uses it. Keep the two in step.
-    static let firmwareTrot = AuraGaitProfile(gait: 1, strideMm: 44, stepHeightMm: 41,
-                                              frequencyCentiHz: 100, dutyPercent: 52)
+    var isSingleFoot: Bool { gait == 2 || gait == 4 || gait == 5 }
+
+    // Pad mode 4 (Trot) stops only on a tick with all four feet down, so its
+    // duty must exceed 50 % and its frequency stay within (duty - 50) x 0.5 Hz,
+    // the rule main/robot_gait.c enforces.
+    var dutyRange: ClosedRange<Int> { isSingleFoot ? 76...90 : gait == 1 ? 51...85 : 45...85 }
+    var frequencyLimitCentiHz: Int {
+        isSingleFoot ? 120 : gait == 1 ? min(300, max(15, (dutyPercent - 50) * 50)) : 300
+    }
 
     static let defaults: [AuraGaitProfile] = [
         .init(gait: 1, strideMm: 80, stepHeightMm: 58, frequencyCentiHz: 140, dutyPercent: 58),
@@ -362,6 +367,7 @@ final class AuraConnection: NSObject, ObservableObject {
     // Board-owned profiles. The desktop receives and configures them but
     // never generates physical targets from them.
     @Published var gaitProfiles = AuraGaitProfile.defaults
+    private var profileEditHold: [Int: Date] = [:]
     @Published var motionTuning = AuraMotionTuning()
     var robotLegTelemetry = (0..<4).map { AuraRobotLegTelemetry(id: $0) }
     @Published var calibrationAxisConfiguration: AuraCalibrationAxisConfiguration?
@@ -939,9 +945,20 @@ final class AuraConnection: NSObject, ObservableObject {
             AuraGaitProfile.defaults[0]
     }
 
+    // An edit in the app. Aura's once-a-second profile report is held off for
+    // that gait for a moment, so it cannot pull a slider back mid-drag.
     func replaceGaitProfileLocally(_ profile: AuraGaitProfile) {
         guard let index = gaitProfiles.firstIndex(where: { $0.gait == profile.gait }) else { return }
-        gaitProfiles[index] = profile
+        profileEditHold[profile.gait] = Date().addingTimeInterval(3)
+        if gaitProfiles[index] != profile { gaitProfiles[index] = profile }
+    }
+
+    // Aura's stored profile, as it reports it. Unchanged values are not
+    // written again, so a report does not redraw the views.
+    private func applyBoardGaitProfile(_ profile: AuraGaitProfile) {
+        guard let index = gaitProfiles.firstIndex(where: { $0.gait == profile.gait }) else { return }
+        if let hold = profileEditHold[profile.gait], hold > Date() { return }
+        if gaitProfiles[index] != profile { gaitProfiles[index] = profile }
     }
 
     // One profile update is stored in Aura's NVS while torque is disabled.
@@ -951,12 +968,12 @@ final class AuraConnection: NSObject, ObservableObject {
             message = "Disarm Aura to change the gait profile."
             return
         }
-        let singleFoot = profile.gait == 2 || profile.gait == 4 || profile.gait == 5
         let stride = UInt16(max(15, min(300, profile.strideMm)))
         let lift = UInt16(max(5, min(100, profile.stepHeightMm)))
-        let frequency = UInt16(max(15, min(singleFoot ? 120 : 300, profile.frequencyCentiHz)))
-        let duty = UInt8(max(singleFoot ? 76 : 45, min(singleFoot ? 90 : 85,
-                                                        profile.dutyPercent)))
+        let duty = UInt8(max(profile.dutyRange.lowerBound, min(profile.dutyRange.upperBound, profile.dutyPercent)))
+        var bounded = profile
+        bounded.dutyPercent = Int(duty)
+        let frequency = UInt16(max(15, min(bounded.frequencyLimitCentiHz, profile.frequencyCentiHz)))
         let safe = AuraGaitProfile(gait: profile.gait, strideMm: Int(stride),
                                    stepHeightMm: Int(lift),
                                    frequencyCentiHz: Int(frequency),
@@ -1304,6 +1321,10 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingRobotState.applyBodyFrame(data)
         } else if data[0] == 0x32 {
             pendingRobotState.applyEstimateFrame(data)
+        } else if data[0] == 0x2f || data[0] == 0x30 {
+            // Aura reports its stored gait profiles and motion tuning on the
+            // telemetry channel; the parser for them lives with the events.
+            parseEvent(data)
         } else if data[0] == 0x2a {
             pendingRobotState.odometryValid = data[1] & 1 != 0
             pendingRobotState.odometryX = Double(i32(data, 2)) / 10.0
@@ -1677,7 +1698,7 @@ final class AuraConnection: NSObject, ObservableObject {
                   ((profile.gait == 2 || profile.gait == 4 || profile.gait == 5)
                       ? (76...90).contains(profile.dutyPercent)
                       : (45...85).contains(profile.dutyPercent)) else { return }
-            replaceGaitProfileLocally(profile)
+            applyBoardGaitProfile(profile)
         case 0x30:
             guard data[1] == 1 else { return }
             let tuning = AuraMotionTuning(
@@ -1687,7 +1708,7 @@ final class AuraConnection: NSObject, ObservableObject {
             guard (100...1000).contains(tuning.movingAttitudeGainPermille),
                   (20...160).contains(tuning.comMaximumVelocityMmPerSecond),
                   (60...900).contains(tuning.comMaximumAccelerationMmPerSecond2) else { return }
-            motionTuning = tuning
+            if motionTuning != tuning { motionTuning = tuning }
         case 0x2b:
             guard (0..<4).contains(Int(data[1])), (0..<3).contains(Int(data[2])) else { return }
             let configuration = AuraCalibrationAxisConfiguration(
