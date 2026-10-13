@@ -1300,11 +1300,14 @@ final class AuraConnection: NSObject, ObservableObject {
         lastTelemetryUptime = ProcessInfo.processInfo.systemUptime
         if data[0] == 0x10 {
             let flags = data[18]
+            // A failed INA226 read arrives as zeros with flag 1 clear; hold
+            // the last reading instead of charting a 0 V / 0 A spike.
+            let hold = flags & 1 == 0 && pendingPower.servoBusVoltage > 0
             let nextPower = AuraPower(
                 uptimeMilliseconds: u32(data, 2),
-                servoBusVoltage: Double(u16(data, 6)) / 1000.0,
-                current: Double(i32(data, 8)) / 1000.0,
-                power: Double(i32(data, 12)) / 1000.0,
+                servoBusVoltage: hold ? pendingPower.servoBusVoltage : Double(u16(data, 6)) / 1000.0,
+                current: hold ? pendingPower.current : Double(i32(data, 8)) / 1000.0,
+                power: hold ? pendingPower.power : Double(i32(data, 12)) / 1000.0,
                 inputVoltage: Double(u16(data, 16)) / 1000.0,
                 inaAvailable: flags & 1 != 0,
                 vinAvailable: flags & 2 != 0,
