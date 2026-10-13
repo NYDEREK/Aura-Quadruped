@@ -1340,12 +1340,19 @@ static void controller_task(void *argument)
 static void telemetry_task(void *argument)
 {
     (void)argument;
-    unsigned tick = 0;
+    unsigned tick = 0, cpu_divider = 0;
     // The whole cycle leaves as one TCP write (~16 frames, ~350 bytes).
     static aura_network_batch_t telemetry_batch;
     TickType_t wake = xTaskGetTickCount();
     while (!shutdown_requested) {
         aura_health_beat(AURA_TASK_TELEMETRY);
+        // CPU load is sampled every second with or without the app, so the
+        // serial status line shows it too.
+        if (++cpu_divider >= AURA_TELEMETRY_HZ) {
+            cpu_divider = 0;
+            aura_cpu_stats_t cpu;
+            aura_health_sample_cpu(&cpu);
+        }
         if (aura_network_connected()) {
             uint8_t frame[AURA_FRAME_SIZE];
             // AURA_TELEMETRY_HZ snapshots a second, each one TCP write of the
@@ -1402,7 +1409,7 @@ static void telemetry_task(void *argument)
             }
             if (tick % AURA_TELEMETRY_HZ == 0) {      // once a second
                 aura_cpu_stats_t cpu;
-                aura_health_sample_cpu(&cpu);
+                aura_health_cpu_latest(&cpu);
                 make_health_cpu_frame(frame, &cpu);
                 aura_network_batch_add(&telemetry_batch, (uint8_t)telemetry_handle, frame, sizeof(frame));
                 for (int rank = 0; rank < cpu.top_count; ++rank) {

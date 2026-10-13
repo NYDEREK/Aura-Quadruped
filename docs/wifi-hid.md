@@ -52,7 +52,7 @@ wskazują **wybrany** tryb:
 | 1 | niebieska | Balans — stoi, IMU trzyma tułów w poziomie |
 | 2 | turkusowa | Poza tułowia — lewy drążek przechyla tułów (±15° na boki i przód/tył) |
 | 3 | fioletowa | Chód — zapisany profil Run (44 mm / 41 mm / 1,0 Hz / 52 %) |
-| 4 | żółta | Trucht z balansem (test) — 40 mm / 30 mm / 1,5 Hz / 70 %, opis w [balans-chodu.md](balans-chodu.md) |
+| 4 | żółta | Trucht z balansem (test) — zapisany profil Trot, edycja w aplikacji (IK Test); opis w [balans-chodu.md](balans-chodu.md) |
 | 5 | różowa | Stoi (zarezerwowany; chód na 3 łapach odłożony) |
 
 ## Sterowanie padem
@@ -69,8 +69,8 @@ wskazują **wybrany** tryb:
 | Options | test na 3 nogach (bez zmian) |
 
 R1 i prawy drążek w pionie nie mają już przypisanej funkcji. Aura startuje w trybie 1.
-W trybie 2 regulator IMU ma referencję przesuniętą o zadany przechył: kompensuje
-pochylenie podłoża, ale nie kasuje przechyłu z drążka.
+Regulator IMU działa tylko w trybie 1, względem poziomu skalibrowanego raz
+(aplikacja, zakładka IMU → Calibrate level). W pozostałych trybach jest wyłączony.
 
 ## Pasek LED (8 diod)
 

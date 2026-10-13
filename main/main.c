@@ -131,15 +131,27 @@ static void state_indicator_task(void *argument)
     }
 }
 
+// The default NVS partition holds the servo calibration (aura_robot:axes_v1),
+// gait profiles, level calibration and pad pairing. Never erase it at boot:
+// a full partition or one written by a newer ESP-IDF must not cost the
+// calibration. Boot without NVS instead; robot_control then has no axis map
+// and refuses to arm, and the radio stays off (Wi-Fi needs NVS).
 static esp_err_t init_calibration_nvs(void)
 {
-    esp_err_t result = nvs_flash_init();
+    const esp_err_t result = nvs_flash_init();
     if (result == ESP_ERR_NVS_NO_FREE_PAGES || result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // This partition stores ESP-IDF radio calibration and VL53L4CD settings.
-        // Recovering it cannot affect the factory application partition.
-        esp_err_t erase_result = nvs_flash_erase();
-        if (erase_result != ESP_OK) return erase_result;
-        result = nvs_flash_init();
+        printf("\n"
+               "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+               "!! NVS UNAVAILABLE: %s\n"
+               "!! %s\n"
+               "!! The partition was NOT erased; servo calibration is still in flash.\n"
+               "!! Running without NVS: no calibration loaded, arming refused, radio off.\n"
+               "!! Back it up first: esptool read-flash 0x9000 0x6000 nvs-backup.bin\n"
+               "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n",
+               esp_err_to_name(result),
+               result == ESP_ERR_NVS_NO_FREE_PAGES
+                   ? "No free page left (partition full or truncated)."
+                   : "Written by a newer ESP-IDF; flash firmware built with that IDF.");
     }
     return result;
 }
@@ -169,6 +181,9 @@ static void print_help(void)
 
 static void print_status(void)
 {
+    if (radio_nvs_status != ESP_OK)
+        printf("!! NVS: %s - not erased; calibration not loaded, arming refused, radio off\n",
+               esp_err_to_name(radio_nvs_status));
     dualsense_snapshot_t controller;
     dualsense_get_snapshot(&controller);
     printf("DualSense: state=%d saved=%d reports=%lu\n", controller.state, controller.has_saved_controller, (unsigned long)controller.sample_count);
@@ -208,6 +223,17 @@ static void print_status(void)
     printf("Servo feedback: %u/%u live, %u moving, largest target error %.1f deg\n",
            feedback_axes, assigned_axes, moving_axes, maximum_tracking_error * 180.0f / 3.14159265f);
     aura_network_print_status();
+    aura_cpu_stats_t cpu;
+    aura_health_cpu_latest(&cpu);
+    if (cpu.valid) {
+        printf("CPU: core 0 %u%%, core 1 %u%%, gait %.1f ms/tick at %u Hz;",
+               cpu.core_load_percent[0], cpu.core_load_percent[1],
+               cpu.gait_tick_cpu_us / 1000.0f, cpu.gait_ticks_per_s);
+        for (int i = 0; i < cpu.top_count; ++i)
+            printf(" %s %u%% (%s)", cpu.top[i].name, cpu.top[i].percent,
+                   cpu.top[i].core == 0 ? "core 0" : cpu.top[i].core == 1 ? "core 1" : "either");
+        printf("\n");
+    }
     app_state_snapshot_t state;
     app_state_get(&state);
 

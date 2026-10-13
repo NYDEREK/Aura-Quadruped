@@ -58,3 +58,5 @@ typedef struct {
 } aura_cpu_stats_t;
 
 void aura_health_sample_cpu(aura_cpu_stats_t *out);
+// The most recent sample, for readers other than the sampling task.
+void aura_health_cpu_latest(aura_cpu_stats_t *out);

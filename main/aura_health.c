@@ -68,6 +68,8 @@ static struct {
     uint32_t counter;
 } cpu_previous[CPU_TASK_SLOTS];
 static unsigned cpu_previous_count;
+static aura_cpu_stats_t cpu_latest;
+static portMUX_TYPE cpu_latest_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t cpu_previous_total, cpu_previous_gait_beats;
 
 static bool previous_counter(TaskHandle_t handle, uint32_t *counter)
@@ -136,4 +138,14 @@ void aura_health_sample_cpu(aura_cpu_stats_t *out)
     }
     cpu_previous_total = total;
     cpu_previous_gait_beats = gait_beats;
+    portENTER_CRITICAL(&cpu_latest_lock);
+    cpu_latest = *out;
+    portEXIT_CRITICAL(&cpu_latest_lock);
+}
+
+void aura_health_cpu_latest(aura_cpu_stats_t *out)
+{
+    portENTER_CRITICAL(&cpu_latest_lock);
+    *out = cpu_latest;
+    portEXIT_CRITICAL(&cpu_latest_lock);
 }
