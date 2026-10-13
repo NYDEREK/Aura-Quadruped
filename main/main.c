@@ -167,6 +167,7 @@ static void print_help(void)
     printf("Commands:\n"
            "  help              - this list\n"
            "  status            - latest IMU and power readings\n"
+           "  bench             - time the body planner and libm (disarmed only)\n"
            "  imu retry         - reconfigure MPU6050 on S1 I2C and restart its observer\n"
            "  servo ping <id>   - ping one ST3215 ID (0..253)\n"
            "  servo read <id>   - read feedback registers 56..70\n"
@@ -226,9 +227,13 @@ static void print_status(void)
     aura_cpu_stats_t cpu;
     aura_health_cpu_latest(&cpu);
     if (cpu.valid) {
-        printf("CPU: core 0 %u%%, core 1 %u%%, gait %.1f ms/tick at %u Hz;",
+        printf("CPU: core 0 %u%%, core 1 %u%%, gait %.1f ms/tick at %u Hz "
+               "(plan max: body %.1f, feet %.1f, swing %.1f ms);",
                cpu.core_load_percent[0], cpu.core_load_percent[1],
-               cpu.gait_tick_cpu_us / 1000.0f, cpu.gait_ticks_per_s);
+               cpu.gait_tick_cpu_us / 1000.0f, cpu.gait_ticks_per_s,
+               cpu.plan_part_max_us[AURA_PLAN_BODY] / 1000.0f,
+               cpu.plan_part_max_us[AURA_PLAN_FEET] / 1000.0f,
+               cpu.plan_part_max_us[AURA_PLAN_SWING] / 1000.0f);
         for (int i = 0; i < cpu.top_count; ++i)
             printf(" %s %u%% (%s)", cpu.top[i].name, cpu.top[i].percent,
                    cpu.top[i].core == 0 ? "core 0" : cpu.top[i].core == 1 ? "core 1" : "either");
@@ -362,6 +367,7 @@ static void execute_command(char *line)
     while (length && line[length - 1] == ' ') line[--length] = '\0';
     if (!strcmp(line, "help")) print_help();
     else if (!strcmp(line, "status")) print_status();
+    else if (!strcmp(line, "bench")) robot_gait_benchmark();
     else if (!strcmp(line, "pad connect"))
         printf("Pad connect: %s\n", esp_err_to_name(dualsense_connect_saved()));
     else if (!strcmp(line, "pad disconnect"))
@@ -613,6 +619,8 @@ void app_main(void)
     if (robot_init == ESP_OK) robot_init = robot_control_start();
     if (robot_init == ESP_OK) robot_init = robot_gait_init();
     if (robot_init == ESP_OK) robot_init = robot_gait_start();
+    // Planner timing at boot (disarmed), so a serial log always shows it.
+    if (robot_init == ESP_OK) robot_gait_benchmark();
 
     // S1 is reserved for MPU6050, so no ToF raw-XSHUT probe may drive GPIO14.
 #if AURA_MPU6050_EXCLUSIVE_TEST

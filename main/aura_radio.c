@@ -587,7 +587,8 @@ static void make_health_timing_frame(uint8_t frame[AURA_FRAME_SIZE])
 
 // [1] flags (1 = measured), [2] core 0 load %, [3] core 1 load %,
 // [4..5] gait task CPU time per tick in us, [6..7] gait ticks per second,
-// [8..9] CPU clock in MHz.
+// [8..9] CPU clock in MHz, [10..15] longest body plan, feet and swing part
+// of the gait tick's planning in the last second, 0.1 ms.
 static void make_health_cpu_frame(uint8_t frame[AURA_FRAME_SIZE], const aura_cpu_stats_t *cpu)
 {
     memset(frame, 0, AURA_FRAME_SIZE);
@@ -598,6 +599,8 @@ static void make_health_cpu_frame(uint8_t frame[AURA_FRAME_SIZE], const aura_cpu
     put_u16(frame + 4, cpu->gait_tick_cpu_us);
     put_u16(frame + 6, cpu->gait_ticks_per_s);
     put_u16(frame + 8, (uint16_t)esp_rom_get_cpu_ticks_per_us());
+    for (int part = 0; part < AURA_PLAN_PART_COUNT; ++part)
+        put_u16(frame + 10 + part * 2, (uint16_t)((cpu->plan_part_max_us[part] + 99u) / 100u));
 }
 
 // [1] rank, [2] % of one core, [3] pinned core (0xff = either),

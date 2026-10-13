@@ -131,6 +131,12 @@ struct AuraHealth: Equatable {
     var gaitTicksPerSecond = 0
     var cpuMHz = 0
     var busiestTasks: [CPUTask] = []
+    // Longest part of the planning section in the last second, ms.
+    static let planParts = ["body plan", "feet", "swing"]
+    var planPartMs = [Double](repeating: 0, count: planParts.count)
+    var planPartsText: String {
+        zip(Self.planParts, planPartMs).map { String(format: "%@ %.1f", $0, $1) }.joined(separator: " · ")
+    }
     static let busyCorePercent = 90
     var busiestText: String {
         busiestTasks.map { "\($0.name) \($0.percent)%" }.joined(separator: " · ")

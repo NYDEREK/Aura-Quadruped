@@ -16,16 +16,40 @@ static float dot(robot_planar_point_t a, robot_planar_point_t b)
 static float cross(robot_planar_point_t a, robot_planar_point_t b)
 { return a.x * b.z - a.z * b.x; }
 
-robot_vec3_t robot_body_trajectory_foot(const robot_body_trajectory_request_t *r,
-                                       robot_leg_t leg, float phase)
+// Everything about one leg's foot path that does not depend on phase. The
+// trajectory build evaluates 64 phases per leg and computes this once.
+typedef struct {
+    robot_vec3_t base;
+    bool held;               // gait 5's lifted leg
+    float spin_radius;       // spin: distance of the neutral foot from the centre
+    float cx, cz, radius;    // turning: centre of the arc and the foot's radius
+    float angle;             // turning: the neutral foot's angle on that arc
+} foot_leg_t;
+
+static foot_leg_t foot_leg(const robot_body_trajectory_request_t *r, robot_leg_t leg)
 {
-    robot_vec3_t base = robot_kinematics_neutral_foot(&r->geometry, leg);
-    base.z += leg == ROBOT_LEG_LEFT_FRONT || leg == ROBOT_LEG_LEFT_REAR
+    foot_leg_t l = {.base = robot_kinematics_neutral_foot(&r->geometry, leg)};
+    l.base.z += leg == ROBOT_LEG_LEFT_FRONT || leg == ROBOT_LEG_LEFT_REAR
         ? r->lateral_stance_mm : -r->lateral_stance_mm;
     if (r->gait == 5 && leg == r->excluded_leg) {
-        base.y = fmaxf(40, r->profile.step_height_mm);
-        return base;
+        l.base.y = fmaxf(40, r->profile.step_height_mm);
+        l.held = true;
+    } else if (r->spin) {
+        l.spin_radius = fmaxf(1, hypotf(l.base.x, l.base.z));
+    } else if (fabsf(r->turn) > 0.02f) {
+        l.cx = -r->lateral * 220.0f / r->turn;
+        l.cz = r->forward * 220.0f / r->turn;
+        const float dx = l.base.x - l.cx, dz = l.base.z - l.cz;
+        l.radius = fmaxf(1, hypotf(dx, dz));
+        l.angle = atan2f(dz, dx);
     }
+    return l;
+}
+
+static robot_vec3_t foot_at(const robot_body_trajectory_request_t *r, robot_leg_t leg,
+                            const foot_leg_t *l, float phase)
+{
+    if (l->held) return l->base;
     float local = r->gait == 5
         ? robot_locomotion_tripod_phase(leg, r->excluded_leg, phase, &r->profile).local_phase
         : phase + robot_locomotion_leg_phase_offset(r->gait, leg);
@@ -33,25 +57,29 @@ robot_vec3_t robot_body_trajectory_foot(const robot_body_trajectory_request_t *r
     const robot_foot_path_t path = robot_gait_foot_path(local,
         robot_locomotion_duty_factor(&r->profile), r->stepping_in_place ? 0 : r->stride_mm,
         r->profile.step_height_mm, true);
+    const robot_vec3_t base = l->base;
     robot_vec3_t target = base;
     if (r->spin) {
-        const float a = r->turn * path.stroke_mm / fmaxf(1, hypotf(base.x, base.z));
+        const float a = r->turn * path.stroke_mm / l->spin_radius;
         target.x = cosf(a) * base.x + sinf(a) * base.z;
         target.z = -sinf(a) * base.x + cosf(a) * base.z;
     } else if (fabsf(r->turn) > 0.02f) {
-        const float cx = -r->lateral * 220.0f / r->turn;
-        const float cz = r->forward * 220.0f / r->turn;
-        const float dx = base.x - cx, dz = base.z - cz;
-        const float radius = fmaxf(1, hypotf(dx, dz));
-        const float a = atan2f(dz, dx) + copysignf(1, r->turn) * path.stroke_mm / radius;
-        target.x = cx + radius * cosf(a);
-        target.z = cz + radius * sinf(a);
+        const float a = l->angle + copysignf(1, r->turn) * path.stroke_mm / l->radius;
+        target.x = l->cx + l->radius * cosf(a);
+        target.z = l->cz + l->radius * sinf(a);
     } else {
         target.x += path.stroke_mm * r->forward;
         target.z += path.stroke_mm * r->lateral;
     }
     target.y = path.lift_mm;
     return target;
+}
+
+robot_vec3_t robot_body_trajectory_foot(const robot_body_trajectory_request_t *r,
+                                       robot_leg_t leg, float phase)
+{
+    const foot_leg_t l = foot_leg(r, leg);
+    return foot_at(r, leg, &l, phase);
 }
 
 bool robot_body_support_reference(const robot_planar_point_t feet[4],
@@ -88,13 +116,35 @@ bool robot_body_support_reference(const robot_planar_point_t feet[4],
 
 // A first-order stable exponential response to a linearly varying input.
 // divergent component is integrated BACKWARD; convergent component FORWARD.
+// The coefficients depend only on the step a = omega * dt.
+typedef struct {
+    float r, one_minus_r, ramp_backward, ramp_forward;
+} propagation_t;
+
+static propagation_t propagation(float a)
+{
+    const float one_minus_r = -expm1f(-a), r = 1.0f - one_minus_r;
+    return (propagation_t){
+        .r = r, .one_minus_r = one_minus_r,
+        .ramp_backward = one_minus_r / a - r,
+        .ramp_forward = 1.0f - one_minus_r / a,
+    };
+}
+
+static robot_planar_point_t propagate_with(const propagation_t *k, robot_planar_point_t state,
+                                           robot_planar_point_t p0, robot_planar_point_t p1,
+                                           bool backward)
+{
+    const float ramp = backward ? k->ramp_backward : k->ramp_forward;
+    return add(mul(state, k->r), add(mul(p0, k->one_minus_r), mul(sub(p1, p0), ramp)));
+}
+
 static robot_planar_point_t propagate(robot_planar_point_t state,
                                       robot_planar_point_t p0, robot_planar_point_t p1,
                                       float a, bool backward)
 {
-    const float one_minus_r = -expm1f(-a), r = 1.0f - one_minus_r;
-    const float ramp = backward ? one_minus_r / a - r : 1.0f - one_minus_r / a;
-    return add(mul(state, r), add(mul(p0, one_minus_r), mul(sub(p1, p0), ramp)));
+    const propagation_t k = propagation(a);
+    return propagate_with(&k, state, p0, p1, backward);
 }
 
 bool robot_body_trajectory_solve(robot_body_trajectory_t *p,
@@ -111,22 +161,22 @@ bool robot_body_trajectory_solve(robot_body_trajectory_t *p,
     }
     p->omega = sqrtf(GRAVITY_MM_S2 / height);
     p->dt = period / N;
-    const float a = p->omega * p->dt;
+    const propagation_t step = propagation(p->omega * p->dt);
     const float periodic_gain = 1.0f / -expm1f(-p->omega * period);
     robot_planar_point_t xi = {0}, eta = {0};
     for (int i = N - 1; i >= 0; --i)
-        xi = propagate(xi, p->support[i], p->support[(i + 1) % N], a, true);
+        xi = propagate_with(&step, xi, p->support[i], p->support[(i + 1) % N], true);
     xi = mul(xi, periodic_gain);
     for (int i = N - 1; i >= 0; --i) {
-        xi = propagate(xi, p->support[i], p->support[(i + 1) % N], a, true);
+        xi = propagate_with(&step, xi, p->support[i], p->support[(i + 1) % N], true);
         p->divergent[i] = xi;
     }
     for (int i = 0; i < N; ++i)
-        eta = propagate(eta, p->support[i], p->support[(i + 1) % N], a, false);
+        eta = propagate_with(&step, eta, p->support[i], p->support[(i + 1) % N], false);
     eta = mul(eta, periodic_gain);
     for (int i = 0; i < N; ++i) {
         p->convergent[i] = eta;
-        eta = propagate(eta, p->support[i], p->support[(i + 1) % N], a, false);
+        eta = propagate_with(&step, eta, p->support[i], p->support[(i + 1) % N], false);
     }
     p->valid = true;
     return true;
@@ -159,11 +209,13 @@ bool robot_body_trajectory_build(robot_body_trajectory_t *p,
         // Below 50% duty diagonal gaits have unsupported flight phases.
         (!robot_locomotion_is_single_support_gait(r->gait) && r->profile.duty_percent < 50))
         return false;
+    foot_leg_t legs[4];
+    for (int leg = 0; leg < 4; ++leg) legs[leg] = foot_leg(r, (robot_leg_t)leg);
     for (int i = 0; i < N; ++i) {
         const float phase = (float)i / N;
         robot_planar_point_t feet[4]; float availability[4]; bool contact[4];
         for (int leg = 0; leg < 4; ++leg) {
-            const robot_vec3_t foot = robot_body_trajectory_foot(r, (robot_leg_t)leg, phase);
+            const robot_vec3_t foot = foot_at(r, (robot_leg_t)leg, &legs[leg], phase);
             const robot_locomotion_leg_phase_t state = r->gait == 5
                 ? robot_locomotion_tripod_phase((robot_leg_t)leg, r->excluded_leg, phase, &r->profile)
                 : robot_locomotion_leg_phase(r->gait, (robot_leg_t)leg, phase, &r->profile);

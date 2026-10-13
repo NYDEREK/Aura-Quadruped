@@ -39,6 +39,15 @@ void aura_health_gait_section_us(aura_gait_section_t section, uint32_t us);
 // Longest time of each section since the last take, microseconds.
 void aura_health_take_gait_sections_us(uint32_t out[AURA_GAIT_SECTION_COUNT]);
 
+// Parts of the gait tick's planning section, timed separately.
+typedef enum {
+    AURA_PLAN_BODY,     // body trajectory (LIPM plan) and its balance step
+    AURA_PLAN_FEET,     // foot targets and trot balance
+    AURA_PLAN_SWING,    // swing-leg body estimate
+    AURA_PLAN_PART_COUNT
+} aura_plan_part_t;
+void aura_health_plan_part_us(aura_plan_part_t part, uint32_t us);
+
 // CPU use since the previous sample, from FreeRTOS run-time counters. The
 // telemetry task samples it once a second.
 #define AURA_CPU_TOP_TASKS 4
@@ -55,6 +64,7 @@ typedef struct {
     uint16_t gait_ticks_per_s;
     uint8_t top_count;
     aura_cpu_task_t top[AURA_CPU_TOP_TASKS];   // busiest tasks, idle excluded
+    uint16_t plan_part_max_us[AURA_PLAN_PART_COUNT];   // longest of each since the last sample
 } aura_cpu_stats_t;
 
 void aura_health_sample_cpu(aura_cpu_stats_t *out);

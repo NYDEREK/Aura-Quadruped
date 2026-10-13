@@ -1,7 +1,9 @@
 #include "aura_health.h"
 
+#include <stdio.h>
 #include <string.h>
 
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -57,6 +59,13 @@ void aura_health_take_gait_sections_us(uint32_t out[AURA_GAIT_SECTION_COUNT])
         out[i] = section_max_us[i];
         section_max_us[i] = 0;
     }
+}
+
+static volatile uint32_t plan_part_max_us[AURA_PLAN_PART_COUNT];
+
+void aura_health_plan_part_us(aura_plan_part_t part, uint32_t us)
+{
+    if (part < AURA_PLAN_PART_COUNT && us > plan_part_max_us[part]) plan_part_max_us[part] = us;
 }
 
 // Run-time counters are esp_timer microseconds (uint32_t, wraps after ~71
@@ -131,6 +140,22 @@ void aura_health_sample_cpu(aura_cpu_stats_t *out)
         out->gait_ticks_per_s = (uint16_t)(ticks > 0xffffu ? 0xffffu : ticks);
         out->valid = true;
     }
+    // Once a minute (and on the first sample) the serial log gets every
+    // task's least free stack and the heap, to size stacks from data.
+    static unsigned samples;
+    if (samples++ % 60 == 0) {
+        printf("Heap: %u B free, %u B lowest, %u B largest block; tasks (prio, core, least free stack):",
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+               (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        for (UBaseType_t i = 0; i < count; ++i) {
+            const BaseType_t core = xTaskGetCoreID(cpu_tasks[i].xHandle);
+            printf(" %s %u %c %lu,", cpu_tasks[i].pcTaskName ? cpu_tasks[i].pcTaskName : "?",
+                   (unsigned)cpu_tasks[i].uxBasePriority, core == 0 ? '0' : core == 1 ? '1' : '-',
+                   (unsigned long)cpu_tasks[i].usStackHighWaterMark);
+        }
+        printf("\n");
+    }
     cpu_previous_count = count;
     for (UBaseType_t i = 0; i < count; ++i) {
         cpu_previous[i].handle = cpu_tasks[i].xHandle;
@@ -138,6 +163,11 @@ void aura_health_sample_cpu(aura_cpu_stats_t *out)
     }
     cpu_previous_total = total;
     cpu_previous_gait_beats = gait_beats;
+    for (int part = 0; part < AURA_PLAN_PART_COUNT; ++part) {
+        const uint32_t us = plan_part_max_us[part];
+        plan_part_max_us[part] = 0;
+        out->plan_part_max_us[part] = (uint16_t)(us > 0xffffu ? 0xffffu : us);
+    }
     portENTER_CRITICAL(&cpu_latest_lock);
     cpu_latest = *out;
     portEXIT_CRITICAL(&cpu_latest_lock);

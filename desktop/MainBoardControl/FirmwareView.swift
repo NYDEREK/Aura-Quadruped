@@ -184,6 +184,7 @@ private struct BoardHealthPanel: View {
                              value: String(format: "%.1f ms · %d Hz", Double(health.gaitTickCPUus) / 1000,
                                            health.gaitTicksPerSecond),
                              tint: health.gaitTickCPUus > 14_000 ? Theme.orange : Theme.text)
+                    ValueRow(label: "Planning parts (ms)", value: health.planPartsText)
                     ValueRow(label: "Busiest", value: health.busiestText)
                         .help(health.busiestTasks.map { "\($0.name): \($0.percent)% of a core, " +
                             ($0.core.map { "pinned to core \($0)" } ?? "either core") }.joined(separator: "\n"))

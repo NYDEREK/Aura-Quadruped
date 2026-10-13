@@ -124,6 +124,8 @@ typedef struct {
 
 esp_err_t robot_gait_init(void);
 esp_err_t robot_gait_start(void);
+// Times the body planner and a few libm calls; prints over UART. Disarmed only.
+void robot_gait_benchmark(void);
 // False when the gait lock was busy past its short timeout; *snapshot is
 // then left untouched.
 bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot);

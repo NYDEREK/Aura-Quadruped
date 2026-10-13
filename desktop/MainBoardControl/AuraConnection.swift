@@ -1429,6 +1429,7 @@ final class AuraConnection: NSObject, ObservableObject {
             pendingHealth.gaitTickCPUus = Int(u16(data, 4))
             pendingHealth.gaitTicksPerSecond = Int(u16(data, 6))
             pendingHealth.cpuMHz = Int(u16(data, 8))
+            pendingHealth.planPartMs = (0..<AuraHealth.planParts.count).map { Double(u16(data, 10 + $0 * 2)) / 10 }
         } else if data[0] == 0x37 {
             let rank = Int(data[1])
             let task = AuraHealth.CPUTask(

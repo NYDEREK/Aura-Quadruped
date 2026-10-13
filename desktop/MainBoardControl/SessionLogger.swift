@@ -367,6 +367,7 @@ final class SessionLogger: ObservableObject {
             events.append(AuraSessionEvent(t: t, kind: "gait tick slow",
                                            detail: "\(health.gaitTickMaxMs) ms" +
                                                (health.timingAvailable ? String(format: " · %@ %.1f ms", slowest.name, slowest.ms) : "") +
+                                               (health.cpuAvailable && slowest.name == "planning" ? " (" + health.planPartsText + ")" : "") +
                                                (health.cpuAvailable ? String(format: " · CPU %.1f ms/tick", Double(health.gaitTickCPUus) / 1000) : "") +
                                                " · mode \(mode)"))
         }

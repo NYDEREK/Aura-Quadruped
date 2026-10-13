@@ -63,6 +63,9 @@
 #define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 ROBOT_JOINT_MAX_ACCELERATION_RAD_S2
 #define ROBOT_TROT_COMMAND_TIME_S 0.25f
 #define ROBOT_TROT_STOP_COMMAND 0.05f
+// Mode 4 rebuilds its body plan at most every 5 ticks (10 Hz) while only
+// the filtered command changes.
+#define ROBOT_TROT_PLAN_TICKS 5
 #define ROBOT_TROT_COM_LEARN_RATE 0.05f
 #define ROBOT_TROT_COM_LEARN_LIMIT_MM 30.0f
 #define ROBOT_TROT_OFFSET_DECAY_S 1.0f
@@ -1038,10 +1041,26 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
         .stride_mm = stride, .stepping_in_place = stepping_in_place, .spin = spin,
         .excluded_leg = tripod_walk_excluded,
     };
+    // Mode 4 low-passes its stick, so the request changed slightly on every
+    // tick and the 64-sample plan was rebuilt 50 times a second: 17-19 ms of
+    // CPU per tick, core 1 at 100 % and a watchdog reset (2026-10-14). While
+    // only the command, stride or height change, its plan is rebuilt at most
+    // every ROBOT_TROT_PLAN_TICKS ticks; a new gait or profile rebuilds at
+    // once. Mode 3 rebuilds on every change, as before.
+    static uint8_t plan_age;
+    const robot_body_trajectory_request_t *planned = &body_trajectory.request;
+    const bool keep_plan = state.active_gait == ROBOT_GAIT_TROT && body_trajectory.valid &&
+        plan_age + 1 < ROBOT_TROT_PLAN_TICKS && planned->gait == request.gait &&
+        memcmp(&planned->profile, &request.profile, sizeof(request.profile)) == 0 &&
+        planned->lateral_stance_mm == request.lateral_stance_mm &&
+        planned->stepping_in_place == request.stepping_in_place &&
+        planned->spin == request.spin && planned->excluded_leg == request.excluded_leg;
+    if (keep_plan) ++plan_age;
+    else plan_age = 0;
     // Unlike p_VPSP itself, this periodic CoM reference includes the
     // acceleration required to stay supported on the scheduled diagonal.
     // Feet and torso are evaluated at the SAME phase; no causal body lag.
-    if (robot_body_trajectory_build(&body_trajectory, &request)) {
+    if (keep_plan || robot_body_trajectory_build(&body_trajectory, &request)) {
         const robot_body_trajectory_sample_t body =
             robot_body_trajectory_sample(&body_trajectory, global_phase);
         state.body_preview_active = true;
@@ -1877,10 +1896,13 @@ static void gait_tick(void)
         ? static_crawl_plan(phase) : (static_crawl_plan_t){0};
     const bool use_dynamic_balance = armed && motion_active && !use_static_crawl &&
                                      !tripod_active && !jumping;
+    int64_t part_start = esp_timer_get_time();
     dynamic_balance_step(dynamic_balance_desired(phase, use_dynamic_balance,
                                                  stepping_in_place, spin, turning,
                                                  &drive, stride, projected_com, body_height),
                          use_dynamic_balance);
+    int64_t part_end = esp_timer_get_time();
+    aura_health_plan_part_us(AURA_PLAN_BODY, (uint32_t)(part_end - part_start));
 
     // There is one floating-body reference per tick: static crawl supplies a
     // three-foot support transfer and Trot/Run supply the VPSP translation.
@@ -1920,6 +1942,7 @@ static void gait_tick(void)
         .pitch_radians = planned_pitch,
     };
 
+    part_start = esp_timer_get_time();
     robot_vec3_t world_feet[4]; bool swing[4];
     for (int leg=0; leg<4; ++leg) {
         const float raw_phase = fmodf(phase + leg_phase_offset(leg, state.active_gait), 1.0f);
@@ -1938,6 +1961,9 @@ static void gait_tick(void)
                        body_height + jump_lift + ROBOT_BODY_COM_VERTICAL_OFFSET_MM,
                        attitude_control.active ? attitude_control.correction_roll_radians : 0.0f,
                        attitude_control.active ? attitude_control.correction_pitch_radians : 0.0f);
+    part_end = esp_timer_get_time();
+    aura_health_plan_part_us(AURA_PLAN_FEET, (uint32_t)(part_end - part_start));
+    part_start = part_end;
     const robot_balance_pose_t commanded_pose = {
         .position={body_pose.x_mm, body_height+jump_lift, body_pose.z_mm},
         .roll=body_pose.roll_radians, .pitch=body_pose.pitch_radians};
@@ -1945,6 +1971,7 @@ static void gait_tick(void)
     const bool swing_balance = armed && motion_active && !jumping && !tripod_active &&
         (!tripod_walk || tripod_walk_entry >= 1) &&
         estimate_swing_body(&feedback, world_feet, swing, commanded_pose, !trot_mode, &measured_pose);
+    aura_health_plan_part_us(AURA_PLAN_SWING, (uint32_t)(esp_timer_get_time() - part_start));
     state.swing_balance_active = swing_balance;
     state.tripod_walk_enabled = tripod_walk;
     state.tripod_walk_excluded = tripod_walk_excluded;
@@ -2594,6 +2621,65 @@ esp_err_t robot_gait_start(void)
     // over 6 KB unused while RAM is short (~24 KB free with Wi-Fi and BT).
     return xTaskCreatePinnedToCore(gait_task_fn, "robot_gait", 6144, NULL, 8, &gait_task,
                                    AURA_MOTION_CORE) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+static uint32_t plan_build_us(robot_body_trajectory_request_t *request, int *valid)
+{
+    // A slightly different command each pass forces a real rebuild.
+    const int64_t start = esp_timer_get_time();
+    for (int i = 0; i < 4; ++i) {
+        request->forward += 0.001f;
+        *valid += robot_body_trajectory_build(&body_trajectory, request);
+    }
+    return (uint32_t)((esp_timer_get_time() - start) / 4);
+}
+
+static float libm_ns(int which)
+{
+    volatile float sink = 0.0f;
+    const int64_t start = esp_timer_get_time();
+    for (int i = 0; i < 1000; ++i) {
+        const float x = 0.3f + (float)i * 1e-4f;
+        switch (which) {
+        case 0: sink += sinf(x); break;
+        case 1: sink += atan2f(x, 0.7f); break;
+        case 2: sink += expm1f(-x); break;
+        default: sink += fmodf(x * 7.0f, 1.0f); break;
+        }
+    }
+    (void)sink;
+    return (float)(esp_timer_get_time() - start);   // us per 1000 calls = ns per call
+}
+
+void robot_gait_benchmark(void)
+{
+    if (!gait_mutex || robot_control_is_armed()) {
+        printf("Bench: only while disarmed\n");
+        return;
+    }
+    if (xSemaphoreTake(gait_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    robot_body_trajectory_request_t request = {
+        .gait = ROBOT_GAIT_TROT, .profile = *gait_profile(ROBOT_GAIT_TROT), .geometry = geometry,
+        .com_height_mm = nominal_body_height_mm + ROBOT_BODY_COM_VERTICAL_OFFSET_MM,
+        .lateral_stance_mm = lateral_stance_mm, .forward = 0.8f, .lateral = 0.1f, .turn = 0.3f,
+        .stride_mm = gait_max_stride_mm(ROBOT_GAIT_TROT),
+    };
+    int trot_valid = 0, run_valid = 0;
+    const uint32_t trot_turning = plan_build_us(&request, &trot_valid);
+    request.turn = 0.0f;
+    const uint32_t trot_straight = plan_build_us(&request, &trot_valid);
+    request.gait = ROBOT_GAIT_RUN;
+    request.profile = *gait_profile(ROBOT_GAIT_RUN);
+    request.stride_mm = gait_max_stride_mm(ROBOT_GAIT_RUN);
+    const uint32_t run_straight = plan_build_us(&request, &run_valid);
+    // The next real tick plans from scratch.
+    body_trajectory.request_cached = false;
+    body_trajectory.valid = false;
+    xSemaphoreGive(gait_mutex);
+    printf("Bench: body plan rebuild trot %lu us turning / %lu us straight (valid %d/8), "
+           "run %lu us (valid %d/4); sinf %.0f ns, atan2f %.0f ns, expm1f %.0f ns, fmodf %.0f ns\n",
+           (unsigned long)trot_turning, (unsigned long)trot_straight, trot_valid,
+           (unsigned long)run_straight, run_valid, libm_ns(0), libm_ns(1), libm_ns(2), libm_ns(3));
 }
 
 bool robot_gait_snapshot(robot_gait_snapshot_t *snapshot)
