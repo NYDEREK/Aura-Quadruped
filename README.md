@@ -19,7 +19,23 @@ A 12-DoF quadruped robot built around twelve Waveshare ST3215 serial bus servos,
 | Status LEDs | 8 × WS2812: robot state, selected mode, six-segment battery bar |
 | Controller | Sony DualSense over Bluetooth Classic; the ESP32 is the HID host |
 
-Aura refuses to arm at 10.0 V or below. Wi-Fi and Bluetooth start only when a stable supply above 7 V is present, so the board can be programmed over USB with the servos unpowered. Pin assignments and the full board reference are in [docs/mainboard.md](docs/mainboard.md).
+Aura refuses to arm at 10.0 V or below. Wi-Fi and Bluetooth start only when a stable supply above 7 V is present, so the board can be programmed over USB with the servos unpowered.
+
+### Aura MainBoard
+
+![Aura MainBoard PCB render](docs/images/mainboard.png)
+
+The custom controller board runs every control loop on the robot. It carries:
+
+- **ESP32-WROOM-32E** with Wi-Fi and Bluetooth.
+- **Battery input** (CN1) feeding the servo supply, with an INA226 current shunt on that supply.
+- **Four servo bus connectors** (CN2–CN5, labelled S V G) for the ST3215 TTL bus.
+- **Sensor ports S1 and S2** on I²C, for the MPU6050 and the VL53L4CD.
+- **LED** and **PWM** ports for the WS2812 strip and an extra output.
+- **USB-C** for flashing and the serial console.
+- **UART** header and **BOOT** / **RESET** buttons.
+
+Pin assignments, flash layout and the full board reference are in [docs/mainboard.md](docs/mainboard.md).
 
 ## Driving with the DualSense
 
@@ -44,20 +60,41 @@ Press PS on a paired controller to connect. A new controller is paired from the 
 | 4 | **Balanced trot** (experimental). Saved Trot profile with a planned body trajectory. |
 | 5 | **Stand.** |
 
-Stride, step height, frequency and duty factor of modes 3 and 4 are edited in the app and stored on the robot. The pad's player LEDs and LED 2 of the strip show the selected mode. The lightbar shows the robot state: orange when disarmed, green when armed, red during a calibration test, and blinking red for a latched fault.
+Stride, step height, frequency and duty factor of modes 3 and 4 are edited on the app's IK Test page and stored on the robot. The pad's player LEDs and LED 2 of the strip show the selected mode. The lightbar shows the robot state: orange when disarmed, green when armed, red during a calibration test, and blinking red for a latched fault.
 
 ## Aura app (macOS)
 
-A native SwiftUI app that finds the robot with Bonjour (`aura-main-board.local:4242`) and receives telemetry at 10 Hz. It never sends motion targets; the robot runs every control loop itself.
+The app is how you set up, tune and watch Aura. It is a native SwiftUI app that finds the robot over Wi-Fi with Bonjour (`aura-main-board.local:4242`) and receives telemetry at 10 Hz. It never sends motion targets: the robot runs every control loop itself, and the DualSense drives it.
 
-| Group | Pages |
-|---|---|
-| Monitor | **Overview**, **Charts** (power, IMU, joints), **Route** (3D path from the on-board estimator), **Sessions**, **Robot 3D** |
-| Robot | **Configuration** (gait profiles, motion tuning), **Calibration** (zero, direction and limits per leg), **IK Test** (offline preview of pad modes 1–4 with the robot's own planner), **Servos** (scan, IDs, direct control) |
-| Board | **IMU** (attitude, level calibration), **Controller** (pairing, live DualSense state), **Sensors**, **LED**, **Firmware** (build and flash, board health) |
+![Aura app: Overview with battery, current, mode, attitude and live charts](docs/images/app-overview.webp)
 
-- **Sessions:** every run is logged on the Mac only, in `~/Documents/Aura/Sessions`. Each log holds per-mode statistics, events (arming, mode changes, faults, restarts) and a 25 Hz trace of the joints, IMU and sticks.
-- **Board health:** CPU load per core, task loop rates, free stack and heap, and the last crash the robot stored.
+**Monitor**
+
+- **Overview.** Battery voltage and charge, servo current and power, consumed mAh, mode, arm state, roll and pitch, the hottest servo, body height and controller battery, with live charts underneath.
+- **Charts.** Power, IMU, servo and gait charts over 10 s, 30 s, 1 min or 5 min. You can pause and export to CSV.
+- **Route.** The 3D path from the on-board estimator.
+- **Robot 3D.** The robot's pose drawn from joint telemetry.
+- **Sessions.** Every run is logged on the Mac only (`~/Documents/Aura/Sessions`). Each log has per-mode statistics; events such as arming, mode changes, faults, slow gait ticks and restarts with crash reports; and a 25 Hz trace of the joints, IMU and sticks.
+
+<p>
+  <img src="docs/images/app-charts-imu.webp" width="49%" alt="Charts, IMU tab: gyroscope, acceleration and IMU temperature">
+  <img src="docs/images/app-charts-power.webp" width="49%" alt="Charts, Power tab: voltage, servo current and power">
+</p>
+
+**Robot**
+
+- **Configuration.** The 12-axis servo map: scan the bus, assign servo IDs to legs and joints, and read the map from or write it to Aura. Also disarm, and clear a safety stop.
+- **Calibration.** Leg by leg: software zero, direction check and joint limits from live servo feedback.
+- **IK Test.** An offline preview of pad modes 1–4, computed with the same planner and inverse kinematics as the firmware. It also holds the gait profile editor for modes 3 and 4 (stride, step height, frequency, duty factor), which saves to the robot while it is disarmed.
+- **Servos.** Scan the bus, assign IDs one servo at a time, read feedback, and drive a single servo in position or motor mode.
+
+**Board**
+
+- **IMU.** Live attitude and the one-time level calibration.
+- **Controller.** DualSense pairing, sticks, triggers, battery and report rate.
+- **Sensors.** INA226 and VL53L4CD readings and settings.
+- **LED.** Strip brightness and pixels.
+- **Firmware.** Build and flash without erasing settings, plus board health: CPU load per core, the busiest tasks, gait CPU time per tick, task loop rates, free stack and heap, and the last crash the robot stored.
 
 ## Firmware
 
