@@ -8,6 +8,8 @@
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
+#include "esp_rom_sys.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -538,10 +540,21 @@ static void vin_radio_guard_task(void *argument)
     }
 }
 
+// A failed allocation is the likely start of the panics that left no core
+// dump (17.10). The serial log names the size, the caps and the task.
+static void allocation_failed(size_t size, uint32_t caps, const char *function_name)
+{
+    esp_rom_printf("ALLOC FAILED: %u B, caps 0x%lx, in %s, task %s, free %u B, largest %u B\n",
+                   (unsigned)size, (unsigned long)caps, function_name ? function_name : "?",
+                   pcTaskGetName(NULL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(app_state_init());
     aura_crash_init();
+    heap_caps_register_failed_alloc_callback(allocation_failed);
 
     // Configure the fitted LED first. HIGH means on per the schematic.
     ESP_ERROR_CHECK(gpio_set_level(BOARD_LED, 0));
@@ -648,7 +661,8 @@ void app_main(void)
     BaseType_t telemetry_started = xTaskCreate(telemetry_task, "telemetry", 4096, NULL, 4, NULL);
     const esp_err_t estimator_started = estimator_service_start();
     BaseType_t indicator_started = xTaskCreate(state_indicator_task, "state_indicator", 3072, NULL, 3, NULL);
-    BaseType_t vin_guard_started = xTaskCreate(vin_radio_guard_task, "vin_radio_guard", 8192,
+    // 5 KB: at most ~1.9 KB was ever used, Wi-Fi and Bluetooth start included.
+    BaseType_t vin_guard_started = xTaskCreate(vin_radio_guard_task, "vin_radio_guard", 5120,
                                                NULL, 6, NULL);
     BaseType_t console_started = console_init == ESP_OK
         ? xTaskCreate(console_task, "console", 4096, NULL, 5, NULL) : pdFAIL;
