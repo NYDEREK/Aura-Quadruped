@@ -1,6 +1,21 @@
 # Punkty powrotu Aury
 
-## Najnowszy — 10.10.2026: pasek LED i bateria
+## Najnowszy — 25.10.2026: wątki ruchu na rdzeniu 1, diagnostyka
+
+Tryb 3 chodzi (sesje z 17.10: wiele minut chodu). Chód, sterowanie serw, odczyt serw
+i estymator działają na rdzeniu 1, z dala od Bluetootha; CPU 240 MHz, kod ruchu `-O2`.
+Aplikacja pokazuje obciążenie rdzeni, czasy planowania i zapis ostatniego crasha
+(partycja `coredump` za aplikacją, NVS bez zmian).
+
+| Co | Gdzie |
+|---|---|
+| Firmware i aplikacja | tag `aura-stabilna-2026-10-25` (gałąź `stable-2309`) |
+| Ustawienia (NVS) | `backups/nvs-stabilna-2026-10-25.bin` — stan z 14.10 sprzed wgrania tego firmware (wgranie nie zmieniło NVS) |
+
+Znane problemy: tryb 4 nie chodzi i resetuje płytkę; 17.10 były dwa resety (panic) także
+w trybie 3, bez zapisanego zrzutu crasha; najmniej wolnego RAM spada do ~350 B.
+
+## 10.10.2026: pasek LED i bateria
 
 Kod ruchu bez zmian względem 1.10 (tryb 3 chodzi dobrze). Doszedł 8-diodowy pasek
 (stan, tryb, bateria 10,0–12,6 V) i blokada uzbrojenia przy ≤ 10,0 V.
