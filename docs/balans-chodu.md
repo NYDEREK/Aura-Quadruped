@@ -36,20 +36,36 @@ stóp** — MIT Cheetah 3 (Bledt i in. 2018, równanie 6) i capture point (Pratt
 W trybie 3 ten błąd paradoksalnie pomaga: przy 0,48 s robot i tak by upadł, a stopa
 lądująca wcześniej go łapie. Dlatego **tryb 3 zostaje bez zmian**.
 
-## Tryb 4 — co robi
+## Tryb 4 — zrównoważony trucht w granicach serw (25.10.2026)
+
+Symulacja z planerem i IK firmware (`robot_gait_feasibility.c`) pokazała dwa
+powody, dla których tryb 4 nie chodził:
+
+| Profil | Szczyt prędkości stawu | Szczyt przyspieszenia | Na dwóch stopach | Wzrost błędu |
+|---|---|---|---|---|
+| Tryb 3 (Run 44/41/1,0 Hz/52 %) | 137°/s | 38 rad/s² | 0,47 s | ×36 |
+| Tryb 4 do 25.10 (Trot 60/54/1,25 Hz/58 %) | 255°/s | 102 rad/s² | 0,32 s | ×11 |
+| Tryb 4 zalecany (Trot 40/20/1,50 Hz/70 %) | 178°/s | 104 rad/s² | 0,20 s | ×4 |
+
+1. **Serwa nie nadążały.** ST3215 robi ~250°/s bez obciążenia przy 11–12 V, a rampa
+   ACC 254 ogranicza przyspieszenie do 39 rad/s². Stary profil chciał więcej, więc
+   stopa nie podnosiła się i nie lądowała tam, gdzie zakładał plan.
+2. **Nic nie łapało upadku w bok.** Capture point był wyłączony. Model z
+   `tests/test_robot_walk_balance.c` pokazuje, że stawianie stóp utrzymuje trucht
+   bez podpierania się tylko przy fazie dwunożnej ≤ ~0,2 s (z nakładaniem się czterech
+   stóp). Dłuższa faza: robot spada w bok i łapie się nogą, tilt 13–25°.
 
 | Element | Działanie |
 |---|---|
-| Profil | zapisany profil Trot z NVS, edytowalny w aplikacji po rozbrojeniu (11.10: 60 mm / 54 mm / 1,25 Hz / 58 %); przyspieszenia serw jak w trybie 3. Warunek: kontakt > 50 % i (kontakt − 50) × 1000 ≥ częstotliwość [cHz] × 20, inaczej tryb 4 nie umiałby się zatrzymać na czterech stopach — firmware odrzuca taki profil i nie startuje truchtu |
-| Znak IMU | sprawdzony na robocie 11.10: roll z IMU ma znak odwrotny do kinematyki, pitch zgodny (`ROBOT_IMU_ROLL_SIGN`); ten sam w regulatorze postawy i w capture point trybu 4 |
-| Postawa w ruchu | korekcja IMU zamrożona na czas truchtu (na linii dwóch stóp nie da się jej wykonać, a jej przechył to sygnał upadku) |
-| Stawianie stóp | stopa ląduje w średnim przesunięciu postawionych stóp + `ξ = h·przechył + √(h/g)·h·prędkość przechyłu`, limit ±40 mm, cel zamrożony po 85 % przenoszenia |
-| Środek masy | każde lądowanie uczy przesunięcie CoM (0,05 korekty, limit ±30 mm); tułów przesuwa się o −CoM, więc korekta stóp zanika |
-| Start / stop | start z czterech stóp (faza 0,5), stop dopiero gdy wszystkie cztery stoją; drążek filtrowany (τ = 0,25 s) |
-| Serwa | ACC 0 (fabryczny „bez rampy”) i limit planera 120 rad/s²; przy ACC 254 serwo ma 39 rad/s², a swing 0,2 s potrzebuje ~130 |
+| Tempo | przy starcie i po każdej zmianie profilu Trot, wysokości lub rozstawu firmware symuluje cykl i zwalnia zegar chodu, aż staw ≤ 3,4 rad/s i ≤ 110 rad/s². Zapisany profil się nie zmienia; UART pisze `Trot profile ... -> runs at X Hz`, aplikacja pokazuje „Runs at” |
+| Serwa w trybie 4 | ACC 0 (bez rampy), planer ≤ 3,5 rad/s i ≤ 120 rad/s² |
+| Stawianie stóp | capture point z IMU włączony (ten sam znak co regulator postawy, sprawdzony 11.10); postawa (przechylanie tułowia) tylko w trybie 1 |
+| Plan tułowia | okresowy LIPM jak dotąd, przeliczany najwyżej 10 razy na sekundę |
+| Start / stop | bez zmian: start z czterech stóp, stop gdy wszystkie cztery stoją |
 
-Tryby 1, 2 i 5: przesunięcia stóp po truchcie wygasają w ~1 s; tułów jest
-przesuwany płynnie. Tryb 3 ma dokładnie dotychczasową ścieżkę.
+**Profil do ustawienia w aplikacji** (IK Test → tryb 4, robot rozbrojony):
+krok 40 mm, wysokość kroku 20 mm, 1,50 Hz, kontakt 70 %. Panel „Servos” pod suwakami
+pokazuje szczyty, czas na dwóch stopach i tempo dla każdej zmiany.
 
 ## Symulacja (tests/test_robot_walk_balance.c)
 
@@ -79,10 +95,11 @@ ST3215. Pokazuje mechanizm i znaki, nie zastępuje próby na robocie.
    `IMU ... roll/pitch` — roll powinien **rosnąć**. Nosem w górę — pitch **rośnie**.
    Jeśli jest odwrotnie, nie testuj trybu 4 i zgłoś.
 2. Tryb 1, uzbrojony: stanie bez zmian.
-3. Tryb 4 (4 kropki, żółta dioda 2), drążek lekko do przodu, robot asekurowany ręką.
-   Oczekiwane: start bez kołysania, dwie nogi w powietrzu, krótkie szybkie kroki.
-   W `status`: `Trot (mode 4): capture=…` — przy przechyle w lewo `capture` Z rośnie.
+3. Tryb 4 (4 kropki, żółta dioda 2) z profilem 40/20/1,50/70, drążek lekko do przodu,
+   robot asekurowany ręką. Oczekiwane: krótkie niskie kroki, dwie nogi w powietrzu,
+   bez podpierania się. W `status`: `Trot (mode 4): capture=…` — przy przechyle
+   w lewo `capture` Z rośnie.
 4. Jeśli serwa stukają lub drgają przy ACC 0 — rozbrój i zgłoś (dobierzemy limit).
 5. Po kilkunastu krokach `learned CoM` powinien ustalić się na stałej wartości.
 
-Powrót: `tools/restore_stable.sh` (tag `aura-led-bateria-2026-10-10`).
+Powrót: `tools/restore_stable.sh` (tag `aura-stabilna-2026-10-25`).

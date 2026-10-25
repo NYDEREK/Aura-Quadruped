@@ -20,6 +20,7 @@
 #include "robot_locomotion.h"
 #include "robot_predictive_support.h"
 #include "robot_body_trajectory.h"
+#include "robot_gait_feasibility.h"
 #include "robot_balance.h"
 #include "robot_static_gait_profile.h"
 #include "robot_static_balance.h"
@@ -59,8 +60,18 @@
 // of a cycle and must hold at least one 20 ms tick, or the trot could miss it
 // every half-cycle and never stop. trot_profile_stoppable() enforces this.
 // The joints are driven as in mode 3.
-#define ROBOT_TROT_SERVO_ACCELERATION ROBOT_GAIT_ACCELERATION
-#define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 ROBOT_JOINT_MAX_ACCELERATION_RAD_S2
+// Mode 4 trots on short swings (~0.2 s on two feet, docs/balans-chodu.md).
+// They need ~100 rad/s^2 of joint acceleration: the ST3215 ramp of ACC 254
+// caps it at 39 rad/s^2, so mode 4 commands ACC 0 (no ramp) and limits the
+// planner itself. Speed stays below the servo's ~4.5 rad/s on 11-12 V.
+#define ROBOT_TROT_SERVO_ACCELERATION 0
+#define ROBOT_TROT_JOINT_MAX_VELOCITY_RAD_S 3.5f
+#define ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2 120.0f
+// The saved Trot profile runs at the tempo that keeps its peaks within
+// these (robot_gait_feasibility.c), a margin below the planner limits.
+#define ROBOT_TROT_FEASIBLE_SPEED_RAD_S 3.4f
+#define ROBOT_TROT_FEASIBLE_ACCELERATION_RAD_S2 110.0f
+#define ROBOT_PROFILE_MIN_FREQUENCY_CHZ 15   // PROFILE_MIN_FREQUENCY_CHZ in robot_locomotion.c
 #define ROBOT_TROT_COMMAND_TIME_S 0.25f
 #define ROBOT_TROT_STOP_COMMAND 0.05f
 // Mode 4 rebuilds its body plan at most every 5 ticks (10 Hz) while only
@@ -296,9 +307,12 @@ static struct {
 // A late IMU sample (the shared I2C bus was busy) holds the correction
 // for this long instead of dropping it to zero, which was a kick.
 #define ROBOT_ATTITUDE_GRACE_US 250000
-// Mode 4's IMU capture point is off: mode 4 is to get a convex MPC body plan
-// instead, and the operator wants balancing in mode 1 only.
-#define ROBOT_TROT_IMU_CAPTURE 0
+// Mode 4 places its feet at the IMU capture point (Raibert / Cheetah 3 eq. 6),
+// chosen by the operator on 2026-10-25 for a balanced trot. This is foot
+// placement only; tilting the body by the IMU (posture) stays in mode 1.
+// Sign: the posture loop's, verified on Aura 2026-10-11 (roll > 0 = left
+// side lower moves the feet left).
+#define ROBOT_TROT_IMU_CAPTURE 1
 // The posture controller uses the same bounded-acceleration generator as a
 // joint command. A rate limiter alone changes velocity instantaneously when
 // IMU error changes, which appears as a kick at the foot during a gait.
@@ -419,9 +433,48 @@ static const robot_locomotion_profile_t *gait_profile(robot_gait_mode_t gait)
     return &gait_profiles[gait];
 }
 
+// Mode 4 runs the saved Trot profile at the tempo the servos can follow:
+// the same foot path with the step frequency scaled down. The saved profile
+// itself, as reported and edited in the app, is never changed.
+static robot_locomotion_profile_t trot_running_profile;
+static robot_gait_feasibility_t trot_feasibility;
+
+static const robot_locomotion_profile_t *running_profile(robot_gait_mode_t gait)
+{
+    return gait == ROBOT_GAIT_TROT ? &trot_running_profile : gait_profile(gait);
+}
+
+// At boot and after a Trot profile, body height or stance edit (disarmed,
+// gait_mutex held). The body plan is the scratch, so the next tick rebuilds.
+static void update_trot_tempo(void)
+{
+    trot_running_profile = gait_profiles[ROBOT_GAIT_TROT];
+    if (!robot_gait_feasibility(ROBOT_GAIT_TROT, &gait_profiles[ROBOT_GAIT_TROT], &geometry,
+                                (float)nominal_body_height_mm, (float)lateral_stance_mm,
+                                ROBOT_TROT_FEASIBLE_SPEED_RAD_S,
+                                ROBOT_TROT_FEASIBLE_ACCELERATION_RAD_S2, &body_trajectory,
+                                &trot_feasibility)) {
+        ESP_LOGW("robot_gait", "Trot profile: feasibility not computed (IK or plan failed)");
+        return;
+    }
+    if (trot_feasibility.rate < 1.0f) {
+        const float scaled = floorf((float)trot_running_profile.frequency_centi_hz *
+                                    trot_feasibility.rate);
+        trot_running_profile.frequency_centi_hz =
+            (uint16_t)fmaxf((float)ROBOT_PROFILE_MIN_FREQUENCY_CHZ, scaled);
+    }
+    printf("Trot profile %u mm / %u mm / %.2f Hz / %u %%: peak %.0f deg/s, %.0f rad/s^2, "
+           "two feet %.2f s -> runs at %.2f Hz\n",
+           gait_profiles[ROBOT_GAIT_TROT].stride_mm, gait_profiles[ROBOT_GAIT_TROT].step_height_mm,
+           gait_profiles[ROBOT_GAIT_TROT].frequency_centi_hz / 100.0f,
+           gait_profiles[ROBOT_GAIT_TROT].duty_percent,
+           trot_feasibility.peak_speed_rad_s * 57.2958f, trot_feasibility.peak_acceleration_rad_s2,
+           trot_feasibility.two_foot_s, trot_running_profile.frequency_centi_hz / 100.0f);
+}
+
 static float gait_hz(robot_gait_mode_t gait)
 {
-    return robot_locomotion_frequency_hz(gait_profile(gait));
+    return robot_locomotion_frequency_hz(running_profile(gait));
 }
 
 static float gait_duty(robot_gait_mode_t gait)
@@ -931,7 +984,7 @@ static robot_vec3_t foot_target_for_leg(robot_leg_t leg, float raw_phase, float 
                                          float stride)
 {
     (void)duty; // The authoritative profile is also consumed by the body plan.
-    const robot_locomotion_profile_t *profile = gait_profile(state.active_gait);
+    const robot_locomotion_profile_t *profile = running_profile(state.active_gait);
     if (!active || jumping || !profile) return standing_foot_for_leg(leg);
     const robot_body_trajectory_request_t request = {
         .gait = (uint8_t)state.active_gait, .profile = *profile, .geometry = geometry,
@@ -1032,7 +1085,7 @@ static robot_vec3_t dynamic_balance_desired(float global_phase, bool active,
     state.body_preview_active = false;
     if (!active || !input) return (robot_vec3_t){0};
 
-    const robot_locomotion_profile_t *profile = gait_profile(state.active_gait);
+    const robot_locomotion_profile_t *profile = running_profile(state.active_gait);
     const robot_body_trajectory_request_t request = {
         .gait = (uint8_t)state.active_gait, .profile = *profile, .geometry = geometry,
         .com_height_mm = body_height + ROBOT_BODY_COM_VERTICAL_OFFSET_MM,
@@ -1759,7 +1812,7 @@ static void gait_tick(void)
         trot_walking = false;
     } else if (!trot_walking && trot_mode && armed && !jumping && magnitude > 0.02f &&
                !attitude_control.reference_pending && !tripod_test_is_active() &&
-               trot_profile_stoppable(gait_profile(ROBOT_GAIT_TROT))) {
+               trot_profile_stoppable(running_profile(ROBOT_GAIT_TROT))) {
         trot_walking = true;
         phase = 0.5f;
     }
@@ -1999,7 +2052,9 @@ static void gait_tick(void)
                 ? joint_trajectory_step(&joint_trajectory[leg][axis], reference,
                                         (float)ROBOT_GAIT_PERIOD_MS / 1000.0f,
                                         (joint_trajectory_limits_t){
-                                            .maximum_velocity = ROBOT_JOINT_MAX_VELOCITY_RAD_S,
+                                            .maximum_velocity = trot_mode
+                                                ? ROBOT_TROT_JOINT_MAX_VELOCITY_RAD_S
+                                                : ROBOT_JOINT_MAX_VELOCITY_RAD_S,
                                             .maximum_acceleration = trot_mode
                                                 ? ROBOT_TROT_JOINT_MAX_ACCELERATION_RAD_S2
                                                 : ROBOT_JOINT_MAX_ACCELERATION_RAD_S2,
@@ -2022,7 +2077,11 @@ static void gait_tick(void)
     state.input_lateral_milli = (int16_t)lroundf(input.lateral * 1000.0f);
     state.input_turn_milli = (int16_t)lroundf(input.turn * 1000.0f);
     state.body_height_mm = (int16_t)lroundf(body_height + jump_lift);
-    const float applied_phase_rate = (use_static_crawl || tripod_active) ? phase_rate : 1.0f;
+    // Mode 4 reports the tempo its saved profile runs at (servo limits).
+    const float trot_tempo = (float)trot_running_profile.frequency_centi_hz /
+                             fmaxf(1.0f, (float)gait_profiles[ROBOT_GAIT_TROT].frequency_centi_hz);
+    const float applied_phase_rate = (use_static_crawl || tripod_active) ? phase_rate
+                                   : (trot_mode && motion_active) ? trot_tempo : 1.0f;
     state.phase_rate_percent = (uint8_t)lroundf(applied_phase_rate * 100.0f);
     publish_estimator_legs(&feedback, armed && !jumping, motion_active, magnitude > 0.02f);
     update_odometry(&feedback, armed, motion_active, tripod_active ? false : jumping,
@@ -2208,6 +2267,7 @@ esp_err_t robot_gait_init(void)
             ESP_LOGW("robot_gait", "fast gait default migration was not persisted: %s",
                      esp_err_to_name(migration_result));
     }
+    update_trot_tempo();
     return ESP_OK;
 }
 
@@ -2339,7 +2399,10 @@ esp_err_t robot_gait_set_body_height_mm(int16_t height_mm)
         if (result == ESP_OK) result = nvs_commit(nvs);
         nvs_close(nvs);
     }
-    if (result == ESP_OK) nominal_body_height_mm = height_mm;
+    if (result == ESP_OK) {
+        nominal_body_height_mm = height_mm;
+        update_trot_tempo();
+    }
     xSemaphoreGive(gait_mutex);
     return result;
 }
@@ -2393,6 +2456,7 @@ esp_err_t robot_gait_set_locomotion_profile(robot_gait_mode_t gait,
     if (result == ESP_OK) {
         if (gait == ROBOT_GAIT_TRIPOD) tripod_walk_profile = *profile;
         else memcpy(gait_profiles, candidate, sizeof(gait_profiles));
+        if (gait == ROBOT_GAIT_TROT) update_trot_tempo();
     }
     xSemaphoreGive(gait_mutex);
     return result;
@@ -2503,7 +2567,10 @@ esp_err_t robot_gait_set_lateral_stance_mm(int16_t stance_mm)
         if (result == ESP_OK) result = nvs_commit(nvs);
         nvs_close(nvs);
     }
-    if (result == ESP_OK) lateral_stance_mm = stance_mm;
+    if (result == ESP_OK) {
+        lateral_stance_mm = stance_mm;
+        update_trot_tempo();
+    }
     xSemaphoreGive(gait_mutex);
     return result;
 }

@@ -30,7 +30,7 @@ iconutil -c icns "$iconset" -o "$app_dir/Contents/Resources/AppIcon.icns"
 # Compile the portable ESP planner once for the desktop Test IK preview.
 planner_objects=()
 mkdir -p "$source_dir/dist/planner"
-for unit in robot_body_trajectory robot_gait_profile robot_locomotion robot_predictive_support robot_kinematics; do
+for unit in robot_body_trajectory robot_gait_profile robot_locomotion robot_predictive_support robot_kinematics robot_gait_feasibility; do
     object="$source_dir/dist/planner/$unit.o"
     xcrun clang -std=c11 -O2 -I "$project_dir/main" -c "$project_dir/main/$unit.c" -o "$object"
     planner_objects+=("$object")

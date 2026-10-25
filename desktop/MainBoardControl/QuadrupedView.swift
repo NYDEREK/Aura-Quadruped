@@ -2245,6 +2245,36 @@ private struct IKLabStepTab: View {
                           range: Double(profile.dutyRange.lowerBound)...Double(profile.dutyRange.upperBound), step: 1,
                           text: "\(profile.dutyPercent)%", editable: editable) { save(id) }
         }
+        servoCheck(profile)
+    }
+
+    // What the servos must do for this profile, from the robot's own planner
+    // and IK (robot_gait_feasibility.c). Mode 4 runs at the tempo that keeps
+    // ST3215 joints <= 3.4 rad/s and <= 110 rad/s^2; mode 3 is not scaled.
+    @ViewBuilder
+    private func servoCheck(_ profile: AuraGaitProfile) -> some View {
+        let trot = profile.gait == 1
+        let speedLimit = trot ? 3.4 : 5.2, accelerationLimit = trot ? 110.0 : 39.0
+        let height = aura.robotState.bodyHeight > 100 ? Double(aura.robotState.bodyHeight) : 233
+        if let f = GaitFeasibility.of(profile, bodyHeight: height, speedLimit: speedLimit,
+                                      accelerationLimit: accelerationLimit) {
+            Panel("Servos") {
+                ValueRow(label: "Peak joint speed", value: String(format: "%.0f°/s", f.peakSpeed * 180 / .pi),
+                         tint: f.peakSpeed > speedLimit ? Theme.orange : Theme.text)
+                    .help(String(format: "Planner limit %.0f°/s; an ST3215 does ~250°/s unloaded on 11–12 V.", speedLimit * 180 / .pi))
+                ValueRow(label: "Peak acceleration", value: String(format: "%.0f rad/s²", f.peakAcceleration),
+                         tint: f.peakAcceleration > accelerationLimit ? Theme.orange : Theme.text)
+                    .help(trot ? "Mode 4 runs the servos without their ramp (ACC 0)." : "ACC 254: the servo ramp allows ~39 rad/s².")
+                ValueRow(label: "On two feet", value: String(format: "%.2f s", f.twoFootSeconds / (trot ? f.rate : 1)),
+                         tint: f.twoFootSeconds / (trot ? f.rate : 1) > 0.22 ? Theme.orange : Theme.text)
+                    .help("Longer than ~0.2 s, foot placement cannot stop the sideways fall: the robot catches itself on a foot.")
+                if trot {
+                    ValueRow(label: "Runs at", value: String(format: "%.0f%% · %.2f Hz", f.rate * 100, profile.frequencyHz * f.rate),
+                             tint: f.rate < 1 ? Theme.orange : Theme.text)
+                        .help("Tempo the servos can follow; the saved profile is not changed.")
+                }
+            }
+        }
     }
 
     private func binding(_ id: Int, _ keyPath: WritableKeyPath<AuraGaitProfile, Int>) -> Binding<Double> {
@@ -2257,6 +2287,30 @@ private struct IKLabStepTab: View {
     private func save(_ id: Int) {
         guard aura.isConnected, !aura.robotState.armed else { return }
         aura.setRobotGaitProfile(aura.gaitProfile(id))
+    }
+}
+
+struct GaitFeasibility {
+    let peakSpeed: Double          // rad/s at the profile's frequency
+    let peakAcceleration: Double   // rad/s^2
+    let twoFootSeconds: Double
+    let rate: Double
+
+    private static let scratch = UnsafeMutablePointer<robot_body_trajectory_t>.allocate(capacity: 1)
+
+    static func of(_ profile: AuraGaitProfile, bodyHeight: Double, speedLimit: Double,
+                   accelerationLimit: Double) -> GaitFeasibility? {
+        var p = robot_locomotion_profile_t(stride_mm: UInt16(clamping: profile.strideMm),
+                                           step_height_mm: UInt16(clamping: profile.stepHeightMm),
+                                           frequency_centi_hz: UInt16(clamping: profile.frequencyCentiHz),
+                                           duty_percent: UInt8(clamping: profile.dutyPercent))
+        var geometry = robot_kinematics_default_geometry()
+        var out = robot_gait_feasibility_t()
+        guard robot_gait_feasibility(UInt8(clamping: profile.gait), &p, &geometry, Float(bodyHeight), 25,
+                                     Float(speedLimit), Float(accelerationLimit), scratch, &out) else { return nil }
+        return GaitFeasibility(peakSpeed: Double(out.peak_speed_rad_s),
+                               peakAcceleration: Double(out.peak_acceleration_rad_s2),
+                               twoFootSeconds: Double(out.two_foot_s), rate: Double(out.rate))
     }
 }
 

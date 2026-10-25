@@ -6,7 +6,8 @@ OUT=$(mktemp -d)
 PURE="main/robot_kinematics.c main/robot_locomotion.c main/robot_body_trajectory.c main/robot_gait_profile.c
       main/robot_predictive_support.c main/robot_balance.c main/joint_trajectory.c main/robot_odometry.c
       main/attitude_filter.c main/battery_gauge.c main/robot_walk_balance.c main/robot_state_estimator.c
-      main/robot_static_balance.c main/robot_static_gait_profile.c main/robot_gait_sync.c main/robot_contact.c"
+      main/robot_static_balance.c main/robot_static_gait_profile.c main/robot_gait_sync.c main/robot_contact.c
+      main/robot_gait_feasibility.c"
 failed=0
 for test in tests/test_*.c; do
     name=$(basename "$test" .c)
